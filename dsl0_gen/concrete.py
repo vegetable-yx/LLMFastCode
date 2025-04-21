@@ -138,3 +138,65 @@ def emit_concrete_expr(expr: D0ConcreteExpr, cnt: int = 0):
             arg_tmp_names.append(tmp)
         return expr.func.x.emit(c, arg_tmp_names)
     raise NotImplementedError("Unreachable")
+
+
+def compute_concrete_expr_depth(expr: D0ConcreteExpr) -> int:
+    """
+    Computes the depth of a concrete expression tree.
+
+    The depth is defined as:
+    - 0 for primitive expressions (leaf nodes)
+    - 1 + max(depth of all subexpressions) for application expressions
+
+    Args:
+        expr: A D0ConcreteExpr to analyze
+
+    Returns:
+        The depth of the expression tree
+    """
+    if isinstance(expr, D0ConcreteExprPrimitive):
+        # Primitive expressions are leaf nodes, so their depth is 0
+        return 0
+    elif isinstance(expr, D0ConcreteExprApply):
+        # For applications, compute depth of function and all arguments
+        func_depth = compute_concrete_expr_depth(expr.func)
+
+        # Find the maximum depth among all arguments
+        max_arg_depth = 0
+        for arg in expr.xs:
+            arg_depth = compute_concrete_expr_depth(arg)
+            max_arg_depth = max(max_arg_depth, arg_depth)
+
+        # The depth is 1 plus the maximum depth of function and arguments
+        return 1 + max(func_depth, max_arg_depth)
+    else:
+        raise TypeError(f"Unsupported expression type: {type(expr)}")
+
+
+def collect_concrete_expr_inputs(expr: D0ConcreteExpr) -> list[D0MakeInput]:
+    """
+    Collects all input nodes from a concrete expression tree.
+
+    Args:
+        expr: A D0ConcreteExpr to analyze
+
+    Returns:
+        A list of all D0MakeInput objects found in the expression
+    """
+    inputs = []
+
+    if isinstance(expr, D0ConcreteExprPrimitive):
+        # Check if this primitive is an input
+        if isinstance(expr.x, D0MakeInput):
+            inputs.append(expr.x)
+    elif isinstance(expr, D0ConcreteExprApply):
+        # Recursively collect inputs from the function
+        inputs.extend(collect_concrete_expr_inputs(expr.func))
+
+        # Recursively collect inputs from all arguments
+        for arg in expr.xs:
+            inputs.extend(collect_concrete_expr_inputs(arg))
+    else:
+        raise TypeError(f"Unsupported expression type: {type(expr)}")
+
+    return inputs

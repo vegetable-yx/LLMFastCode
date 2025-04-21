@@ -20,7 +20,7 @@ from concrete import (
 )
 import random
 
-N = sorted(list(set([j * (2**i) for i in range(5) for j in range(1, 5)])))
+N = sorted(list(set([j * (2**i) for i in range(8) for j in range(1, 5)])))
 
 
 ones_mat = {

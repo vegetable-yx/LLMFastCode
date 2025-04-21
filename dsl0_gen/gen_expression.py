@@ -120,7 +120,7 @@ def emit_code(concrete_expr: D0ConcreteExpr, name_mapping: dict):
         if isinstance(v, D0MakeInput):
             param_def = f"// {v.name} {v.sig.t_element} {v.sig.size}"
             print(param_def)
-    param_def = f"// result {f.func.sig.t_to.t_element} {f.func.sig.t_to.size}"
+    param_def = f"// result {concrete_expr.func.sig.t_to.t_element} {concrete_expr.func.sig.t_to.size}"
     print(param_def)
 
     head = "void slow_performance("
@@ -129,7 +129,7 @@ def emit_code(concrete_expr: D0ConcreteExpr, name_mapping: dict):
         if isinstance(v, D0MakeInput):
             param_def = f"{v.sig.t_element}* {v.name}"
             heads.append(param_def)
-    param_def = f"{f.func.sig.t_to.t_element}* result"
+    param_def = f"{concrete_expr.func.sig.t_to.t_element}* result"
     heads.append(param_def)
     head += ",".join(heads)
     head += ") {"

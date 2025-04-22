@@ -5,8 +5,9 @@
 
 // [Slow performance function]
 
-
+/* Max performance function start */
 // [Max performance function]
+/* Max performance function end */
 
 /* LLM prompt code end */
 

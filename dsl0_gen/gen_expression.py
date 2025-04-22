@@ -136,7 +136,7 @@ def emit_code(concrete_expr: D0ConcreteExpr, name_mapping: dict):
     print(head)
     cnt, res = emit_concrete_expr(concrete_expr)
     print(
-        f"for (int i_{cnt} = 0; i_{cnt} < {f.func.sig.t_to.size}; i_{cnt}++) result[i_{cnt}] = {res}[i_{cnt}]; }}"
+        f"for (int i_{cnt} = 0; i_{cnt} < {concrete_expr.func.sig.t_to.size}; i_{cnt}++) result[i_{cnt}] = {res}[i_{cnt}]; }}"
     )
 
     # for v in name_mapping.values():

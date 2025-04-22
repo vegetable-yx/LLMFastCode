@@ -159,7 +159,7 @@ int main(int argc, char **argv)
     bench_func f = userFuncs[i];
     // [invoke function]
 
-    double error = nrm_sqr_diff((double *)result, (double *)result_base, 32);
+    // [compute loss]
     if (error > EPS)
     {
       /*cout << error << endl;*/

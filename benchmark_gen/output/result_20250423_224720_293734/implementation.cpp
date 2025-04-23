@@ -52,53 +52,34 @@ void slow_performance(float *i_z_128, float *i_y_32, float *i_y_16, float *i_z_6
 void max_performance(float *i_z_128, float *i_y_32, float *i_y_16, float *i_z_64, float *result)
 {
     float tmp_3[16 * 4];
-    float tmp_6[2 * 8];
-    
-    #pragma omp parallel sections
-    {
-        #pragma omp section
-        {
-            // Matrix multiplication for tmp_3
-            for (int i_3 = 0; i_3 < 16; i_3++)
-            {
-                for (int k_3 = 0; k_3 < 4; k_3++)
-                {
-                    float sum = 0.0f;
-                    for (int j_3 = 0; j_3 < 8; j_3++)
-                    {
-                        sum += i_z_128[i_3 * 8 + j_3] * i_y_32[j_3 * 4 + k_3];
-                    }
-                    tmp_3[i_3 * 4 + k_3] = sum;
-                }
+    #pragma omp parallel for
+    for (int i_3 = 0; i_3 < 16; i_3++) {
+        for (int k_3 = 0; k_3 < 4; k_3++) {
+            float sum = 0.0f;
+            for (int j_3 = 0; j_3 < 8; j_3++) {
+                sum += i_z_128[i_3 * 8 + j_3] * i_y_32[j_3 * 4 + k_3];
             }
-        }
-        
-        #pragma omp section
-        {
-            // Matrix multiplication for tmp_6
-            for (int i_6 = 0; i_6 < 2; i_6++)
-            {
-                for (int k_6 = 0; k_6 < 8; k_6++)
-                {
-                    float sum = 0.0f;
-                    for (int j_6 = 0; j_6 < 8; j_6++)
-                    {
-                        sum += i_y_16[i_6 * 8 + j_6] * i_z_64[j_6 * 8 + k_6];
-                    }
-                    tmp_6[i_6 * 8 + k_6] = sum;
-                }
-            }
+            tmp_3[i_3 * 4 + k_3] = sum;
         }
     }
-    
-    // Final matrix multiplication with improved indexing
-    for (int i_7 = 0; i_7 < 8; i_7++)
-    {
-        for (int k_7 = 0; k_7 < 2; k_7++)
-        {
+
+    float tmp_6[2 * 8];
+    #pragma omp parallel for
+    for (int i_6 = 0; i_6 < 2; i_6++) {
+        for (int k_6 = 0; k_6 < 8; k_6++) {
             float sum = 0.0f;
-            for (int j_7 = 0; j_7 < 8; j_7++)
-            {
+            for (int j_6 = 0; j_6 < 8; j_6++) {
+                sum += i_y_16[i_6 * 8 + j_6] * i_z_64[j_6 * 8 + k_6];
+            }
+            tmp_6[i_6 * 8 + k_6] = sum;
+        }
+    }
+
+    #pragma omp parallel for
+    for (int i_7 = 0; i_7 < 8; i_7++) {
+        for (int k_7 = 0; k_7 < 2; k_7++) {
+            float sum = 0.0f;
+            for (int j_7 = 0; j_7 < 8; j_7++) {
                 sum += tmp_3[i_7 * 8 + j_7] * tmp_6[j_7 * 2 + k_7];
             }
             result[i_7 * 2 + k_7] = sum;

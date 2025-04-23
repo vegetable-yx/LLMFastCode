@@ -31,5 +31,5 @@ def gen_prompt(dst_folder):
     '''
 
 if __name__ == "__main__":
-    dst_folder = "./output/run_20250422_205743_249252"
+    dst_folder = "./output/run_20250423_224625_164654"
     print(gen_prompt(dst_folder))

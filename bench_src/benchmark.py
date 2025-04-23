@@ -32,5 +32,5 @@ def benchmark(folder_path):
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    folder_path = 'benchmark_gen/output/result_20250422_222142_828681'
+    folder_path = './'
     benchmark(folder_path)

@@ -6,6 +6,21 @@ Return **only** the full, ready-to-compile `max_performance` function at the ver
 
 
 
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-512, loop unrolling, etc.).  
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**  
+- Intel Xeon Gold 6130 (Skylake-SP) — 16 cores/32 threads, 2.1 GHz base, AVX-512 F/CD/BW/DQ/VL  
+- Caches: 32 KB L1 D + 32 KB L1 I per core, 1 MB L2 per core, 22 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native`
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+
+
+
 
 I have the following C++ code that includes a function called "slow_performance".
 Please rewrite the given "slow_performance" function into the "max_performance" function, fully preserving the functionality, inputs and outputs, exactly as in the original implementation.

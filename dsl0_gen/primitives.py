@@ -20,8 +20,12 @@ from concrete import (
 )
 import random
 
-N = sorted(list(set([j * (2**i) for i in range(8) for j in range(1, 5)])))
-
+BASE = 7
+STEP = 4
+N = sorted(
+    list(set([j * (2**i) for i in range(0, STEP + BASE) for j in range(1, 5)]))
+)
+# print(N)
 
 ones_mat = {
     f"ones_mat_{i}x{j}": D0MakeConst(
@@ -31,16 +35,16 @@ ones_mat = {
     for j in N
 }
 
-rand_mat = {
-    f"rand_mat_{i}x{j}": D0MakeConst(
-        f"rand_mat_{i}x{j}",
-        D0Atom("float"),
-        i * j,
-        [float(random.randint(-10, 10)) for _ in range(i * j)],
-    )
-    for i in N
-    for j in N
-}
+# rand_mat = {
+#     f"rand_mat_{i}x{j}": D0MakeConst(
+#         f"rand_mat_{i}x{j}",
+#         D0Atom("float"),
+#         i * j,
+#         [float(random.randint(-10, 10)) for _ in range(i * j)],
+#     )
+#     for i in N
+#     for j in N
+# }
 
 
 def gen_mat_transpose(i: int, j: int):

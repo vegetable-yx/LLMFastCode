@@ -41,7 +41,7 @@ def parse_benchmark_file(file_path):
 
 
 def main():
-    file_path = "benchmark.c"
+    file_path = "benchmark_L.c"
     functions = parse_benchmark_file(file_path)
 
     # Print the parsed results
@@ -53,7 +53,7 @@ def main():
         print("Code:")
         print(f"  {func['code'][:100]}...")  # Print first 100 chars of code
         print()
-    srsly.write_jsonl("benchmark_100.jsonl", functions)
+    srsly.write_jsonl("benchmark_L_100.jsonl", functions)
 
 
 if __name__ == "__main__":

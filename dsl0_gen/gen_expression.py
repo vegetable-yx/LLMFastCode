@@ -22,7 +22,12 @@ from primitives import (
 from itertools import product
 from random import sample, shuffle, choice
 
-sizes = sorted(list(set([j * (2**i) for i in range(4, 8) for j in range(1, 2)])))
+BASE = 9
+STEP = 2
+sizes = sorted(
+    list(set([j * (2**i) for i in range(BASE, BASE + STEP) for j in range(1, 5)]))
+)
+# print(sizes)
 
 vars = [D0Var(f"A_{i}", D0Vec(D0Atom("float"), i)) for i in sizes]
 funcs = [

@@ -177,3 +177,5 @@ cython_debug/
 .DS_Store
 
 api_key.txt
+
+output/

@@ -6,12 +6,18 @@ def gen_prompt(dst_folder):
     pattern = re.compile(r'/\*\s*LLM prompt code start\s*\*/(.*?)/\*\s*LLM prompt code end\s*\*/', re.DOTALL)
 
     prompt = '''
-    I have the following C++ code structure that includes a function called "slow_performance".
-    Please rewrite the given "slow_performance" function into the "max_performance" function, fully preserving the functionality, inputs, outputs, memory layouts, and side-effects exactly as in the original implementation.
-    The only acceptable difference must be performance-related optimizations that significantly improve computational efficiency (such as loop unrolling, cache-friendly memory accesses, SIMD vectorization, reducing unnecessary instructions, etc.) and minimize the total execution cycles.
-    Your answer MUST strictly **ONLY** contain the complete and optimized implementation of the "max_performance" function at **THE END OF YOUR OUTPUT**. No other text, comments, or explanations should be included!
-    Ensure the provided function implementation is immediately ready for compilation and use as-is, preserving identical behavior relative to "slow_performance".
-    '''
+    Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical.  
+    Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-512, loop unrolling, etc.).  
+    **Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+    **Target system**  
+    - Intel(R) Xeon(R) Platinum 8336C CPU @ 2.30GHz
+    - Caches: 48 KB L1 D + 32 KB L1 I per core, 1.25 MB L2 per core, 54 MB shared L3  
+    - GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+    Write SIMDe code with <immintrin.h> whenever possible.
+    Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+'''
 
     for root, dirs, files in os.walk(dst_folder):
         for file in files:
@@ -23,13 +29,21 @@ def gen_prompt(dst_folder):
                         extracted_content = match.group(1).strip()
                         # print(extracted_content)
 
-    return f'''
+    result = f'''
     ```cpp
     {extracted_content}
     ```
     {prompt}
     '''
 
+    for root, dirs, files in os.walk(dst_folder):
+        for file in files:
+            if file == "prompt.txt":
+                with open(os.path.join(root, file), "w", encoding="utf-8") as f:
+                    f.write(result)
+
+    return result
+
 if __name__ == "__main__":
-    dst_folder = "./output/run_20250423_224625_164654"
+    dst_folder = "./output/run_20250424_212953_804478"
     print(gen_prompt(dst_folder))

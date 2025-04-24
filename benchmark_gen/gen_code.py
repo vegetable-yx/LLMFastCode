@@ -49,7 +49,10 @@ def generate_execute_code(src_folder):
         max_tokens=10000,
         messages=[
             {"role": "user", "content": f"{prompt}"}
-        ]
+        ],
+        extra_body={
+            "thinking": { "type": "enabled", "budget_tokens": 2000 }
+        }
     )
 
     output = response.content
@@ -89,5 +92,5 @@ def generate_execute_code(src_folder):
                             fw.write(new_content)
                     break
 if __name__ == "__main__":
-    src_folder = "./output/run_20250423_224625_164654"
+    src_folder = "./output/run_20250424_212953_804478"
     generate_execute_code(src_folder)

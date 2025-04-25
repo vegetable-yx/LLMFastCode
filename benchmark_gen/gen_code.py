@@ -91,6 +91,7 @@ def generate_execute_code(src_folder):
                         with open(os.path.join(root, file), "w", encoding="utf-8") as fw:
                             fw.write(new_content)
                     break
+    return dst_folder
 if __name__ == "__main__":
     src_folder = "./output/run_20250424_212953_804478"
     generate_execute_code(src_folder)

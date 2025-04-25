@@ -1,3 +1,4 @@
+#ifdef __aarch64__
 #ifndef vct_AARCH64_H
 #define vct_AARCH64_H
 
@@ -16,7 +17,6 @@
 #define FREQ unsigned long long
 #define INT32 unsigned int
 #define myInt64 unsigned long long
-#define INT32 unsigned int
 
 
 /* This is the virtual counter-timer 
@@ -98,7 +98,7 @@ TIMESTAMP get_vct_freq(void) {
 }
 
 #endif // vct_AARCH64_H
-
+#endif
 
 #ifdef __x86_64__
 

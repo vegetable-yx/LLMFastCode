@@ -10,12 +10,15 @@ def gen_prompt(dst_folder):
     Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-512, loop unrolling, etc.).  
     **Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
 
-    **Target system**  
+    **Target system**
     - Intel(R) Xeon(R) Platinum 8336C CPU @ 2.30GHz
     - Caches: 48 KB L1 D + 32 KB L1 I per core, 1.25 MB L2 per core, 54 MB shared L3  
     - GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
 
-    Write SIMDe code with <immintrin.h> whenever possible.
+    **Hints**
+    - Write SIMDe code with <immintrin.h> whenever possible.
+    - Do not use libc functions as their performance is not good.
+
     Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
 '''
 

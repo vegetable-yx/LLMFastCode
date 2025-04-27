@@ -1,4 +1,4 @@
-import anthropic
+from openai import OpenAI
 import os
 import re
 import shutil
@@ -38,30 +38,22 @@ def generate_execute_code(src_folder):
     with open("../api_key.txt", "r") as f:
         claude_api_key = f.read().strip()
 
-    client = anthropic.Anthropic(
-        api_key=claude_api_key,
+    client = OpenAI(
+        api_key=claude_api_key,  # Your Anthropic API key
+        base_url="https://api.anthropic.com/v1/"  # Anthropic's API endpoint
     )
 
     prompt = gen_prompt(src_folder)
 
-    response = client.messages.create(
-        model="claude-3-7-sonnet-20250219",
-        max_tokens=10000,
+    response = client.chat.completions.create(
+        model="claude-3-7-sonnet-20250219", # Anthropic model name
         messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": f"{prompt}"}
         ],
-        extra_body={
-            "thinking": { "type": "enabled", "budget_tokens": 2000 }
-        }
     )
 
-    output = response.content
-
-    for content_block in output:
-        if content_block.type == "text":
-            print(content_block.text)
-            result = extract_function(content_block.text)
-            break
+    result = response.choices[0].message.content
 
     if result:
         print("Success")
@@ -93,5 +85,5 @@ def generate_execute_code(src_folder):
                     break
     return dst_folder
 if __name__ == "__main__":
-    src_folder = "./output/run_20250424_212953_804478"
+    src_folder = "./output/run_20250425_221250_483741"
     generate_execute_code(src_folder)

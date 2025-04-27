@@ -1,4 +1,5 @@
 #include <immintrin.h>
+#include <cstring>
 #include "common.h"
 
 /* LLM prompt code start */

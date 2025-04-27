@@ -15,6 +15,11 @@ def benchmark(folder_path):
         output_text = stdout.decode('utf-8')
         error_text = stderr.decode('utf-8')
 
+        wrong_matches = re.findall(r'The result of the (\d+)th function is not correct', output_text)
+
+        for match in wrong_matches:
+            print(f"{match}th function is not correct.")
+
         slow_match = re.search(r'Running: slow_performance\s+([0-9.]+) cycles', output_text)
         fast_match = re.search(r'Running: max_performance\s+([0-9.]+) cycles', output_text)
 

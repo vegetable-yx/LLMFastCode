@@ -19,7 +19,8 @@ def benchmark_gen(file_path, execute = False, result_file = './result.txt'):
             dst_folder = generate_execute_code(tmp_folder)
 
             if execute:
-                execute(dst_folder, result_file)
+                print(f"Executing benchmark in {dst_folder}...")
+                execute_test(dst_folder, result_file)
 
 def execute_test(dst_folder, result_file):
     original_dir = os.getcwd()

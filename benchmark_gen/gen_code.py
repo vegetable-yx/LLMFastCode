@@ -53,7 +53,7 @@ def generate_execute_code(src_folder):
         ],
     )
 
-    result = response.choices[0].message.content
+    result = extract_function(response.choices[0].message.content)
 
     if result:
         print("Success")

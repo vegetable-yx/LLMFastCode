@@ -5,7 +5,7 @@
 #define NC 32
 #define NR 64
 
-void slow_performance1(double *x, double *A, double *y)
+void slow_performance1(double *x __attribute__((aligned(32))), double *A __attribute__((aligned(32))), double *y __attribute__((aligned(32))))
 {
     for (int j = 0; j < NC; j++)
         y[j] = 0;
@@ -19,7 +19,7 @@ void slow_performance1(double *x, double *A, double *y)
     }
 }
 
-void maxperformance(double *x, double *A, double *y)
+void maxperformance(double *x __attribute__((aligned(32))), double *A __attribute__((aligned(32))), double *y __attribute__((aligned(32))))
 {
     __m256d y0 = _mm256_setzero_pd();
     __m256d y1 = _mm256_setzero_pd();

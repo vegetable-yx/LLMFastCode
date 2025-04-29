@@ -56,21 +56,117 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_storeu_pd(z + i, zero);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_imag = _mm256_setzero_pd();
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_b = _mm256_loadu_pd(x + (i * 4 + k) * 2);
+                __m256d c_d = _mm256_loadu_pd(y + (k * 4 + j) * 2);
+
+                __m256d prod_real_imag = _mm256_mul_pd(_mm256_set_pd(a_b[0], -a_b[1], a_b[0], -a_b[1]), c_d);
+                prod_real_imag = _mm256_fmadd_pd(_mm256_permute_pd(a_b, 5), _mm256_permute_pd(c_d, 5), prod_real_imag);
+                prod_real_imag = _mm256_add_pd(prod_real_imag, _mm256_permute_pd(prod_real_imag, 5));
+
+                real_imag = _mm256_add_pd(real_imag, prod_real_imag);
+            }
+            _mm256_storeu_pd(z + (i * 4 + j) * 2, real_imag);
+        }
+    }
+}
 
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+53.1838 cycles
+
+Running: maxperformance
+116.292 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_storeu_pd(z + i, zero);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_imag = _mm256_setzero_pd();
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_b = _mm256_loadu_pd(x + (i * 4 + k) * 2);
+                __m256d c_d = _mm256_loadu_pd(y + (k * 4 + j) * 2);
+
+                __m256d prod_real_imag = _mm256_mul_pd(_mm256_set_pd(a_b[0], -a_b[1], a_b[0], -a_b[1]), c_d);
+                prod_real_imag = _mm256_fmadd_pd(_mm256_permute_pd(a_b, 5), _mm256_permute_pd(c_d, 5), prod_real_imag);
+                prod_real_imag = _mm256_add_pd(prod_real_imag, _mm256_permute_pd(prod_real_imag, 5));
+
+                real_imag = _mm256_add_pd(real_imag, prod_real_imag);
+            }
+            _mm256_storeu_pd(z + (i * 4 + j) * 2, real_imag);
+        }
+    }
+}
 
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+54.8981 cycles
+
+Running: maxperformance
+117.241 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_storeu_pd(z + i, zero);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_imag = _mm256_setzero_pd();
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_b = _mm256_loadu_pd(x + (i * 4 + k) * 2);
+                __m256d c_d = _mm256_loadu_pd(y + (k * 4 + j) * 2);
+
+                __m256d prod_real_imag = _mm256_mul_pd(_mm256_set_pd(a_b[0], -a_b[1], a_b[0], -a_b[1]), c_d);
+                prod_real_imag = _mm256_fmadd_pd(_mm256_permute_pd(a_b, 5), _mm256_permute_pd(c_d, 5), prod_real_imag);
+                prod_real_imag = _mm256_add_pd(prod_real_imag, _mm256_permute_pd(prod_real_imag, 5));
+
+                real_imag = _mm256_add_pd(real_imag, prod_real_imag);
+            }
+            _mm256_storeu_pd(z + (i * 4 + j) * 2, real_imag);
+        }
+    }
+}
 
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+54.8798 cycles
+
+Running: maxperformance
+116.258 cycles
 <<<
-
+WA
 ================================

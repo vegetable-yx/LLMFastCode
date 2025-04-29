@@ -56,21 +56,181 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+```cpp
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    double y_real_t[16], y_imag_t[16];
+    for (int j = 0; j < 4; ++j) {
+        for (int k = 0; k < 4; ++k) {
+            y_real_t[j*4 +k] = y[(k*4 +j)*2];
+            y_imag_t[j*4 +k] = y[(k*4 +j)*2 +1];
+        }
+    }
+
+    __m256d two = _mm256_set1_pd(2.0);
+    for (int j = 0; j < 4; ++j) {
+        __m256d y_r = _mm256_load_pd(&y_real_t[j*4]);
+        __m256d y_i = _mm256_load_pd(&y_imag_t[j*4]);
+        for (int i = 0; i < 4; ++i) {
+            __m256d x_row = _mm256_loadu_pd(&x[i*8]);
+            __m256d x_r = _mm256_shuffle_pd(x_row, x_row, 0x44);
+            x_r = _mm256_permute_pd(x_r, 0x44);
+            __m256d x_i = _mm256_shuffle_pd(x_row, x_row, 0xAA);
+            x_i = _mm256_permute_pd(x_i, 0x44);
+            
+            __m256d t1 = _mm256_mul_pd(_mm256_mul_pd(x_r, two), y_r);
+            __m256d t2 = _mm256_mul_pd(x_i, y_i);
+            __m256d real = _mm256_sub_pd(t1, t2);
+            
+            __m256d t3 = _mm256_mul_pd(_mm256_mul_pd(x_i, two), y_r);
+            __m256d t4 = _mm256_mul_pd(_mm256_mul_pd(x_r, two), y_i);
+            __m256d imag = _mm256_add_pd(t3, t4);
+            
+            real = _mm256_hadd_pd(real, real);
+            real = _mm256_hadd_pd(real, real);
+            double r = _mm256_cvtsd_f64(real);
+            
+            imag = _mm256_hadd_pd(imag, imag);
+            imag = _mm256_hadd_pd(imag, imag);
+            double i = _mm256_cvtsd_f64(imag);
+            
+            z[(i*4 +j)*2] = r;
+            z[(i*4 +j)*2 +1] = i;
+        }
+    }
+}
+```
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+```cpp
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d two = _mm256_set1_pd(2.0);
+    for (int i = 0; i < 4; ++i) {
+        double a0 = x[i*8 + 0];
+        double a1 = x[i*8 + 2];
+        double a2 = x[i*8 + 4];
+        double a3 = x[i*8 + 6];
+        __m256d a_vec = _mm256_set_pd(a3, a2, a1, a0);
+        
+        double b0 = x[i*8 + 1];
+        double b1 = x[i*8 + 3];
+        double b2 = x[i*8 + 5];
+        double b3 = x[i*8 + 7];
+        __m256d b_vec = _mm256_set_pd(b3, b2, b1, b0);
+        
+        for (int j = 0; j < 4; ++j) {
+            double c0 = y[j*8 + 0];
+            double c1 = y[j*8 + 2];
+            double c2 = y[j*8 + 4];
+            double c3 = y[j*8 + 6];
+            __m256d c_vec = _mm256_set_pd(c3, c2, c1, c0);
+            
+            double d0 = y[j*8 + 1];
+            double d1 = y[j*8 + 3];
+            double d2 = y[j*8 + 5];
+            double d3 = y[j*8 + 7];
+            __m256d d_vec = _mm256_set_pd(d3, d2, d1, d0);
+            
+            __m256d ac = _mm256_mul_pd(a_vec, c_vec);
+            __m256d bd = _mm256_mul_pd(b_vec, d_vec);
+            __m256d term1 = _mm256_sub_pd(_mm256_mul_pd(ac, two), bd);
+            
+            __m256d bc = _mm256_mul_pd(b_vec, c_vec);
+            __m256d ad = _mm256_mul_pd(a_vec, d_vec);
+            __m256d sum_bc_ad = _mm256_add_pd(bc, ad);
+            __m256d term2 = _mm256_mul_pd(sum_bc_ad, two);
+            
+            __m256d sum_real = _mm256_hadd_pd(term1, term1);
+            sum_real = _mm256_hadd_pd(sum_real, sum_real);
+            double real = _mm256_extract_pd(sum_real, 0);
+            
+            __m256d sum_imag = _mm256_hadd_pd(term2, term2);
+            sum_imag = _mm256_hadd_pd(sum_imag, sum_imag);
+            double imag = _mm256_extract_pd(sum_imag, 0);
+            
+            z[(i*4 + j)*2] = real;
+            z[(i*4 + j)*2 + 1] = imag;
+        }
+    }
+}
+```
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+```cpp
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        __m256d real_sum = _mm256_setzero_pd();
+        __m256d imag_sum = _mm256_setzero_pd();
+
+        for (int k = 0; k < 4; ++k) {
+            double x_real = x[8 * i + 2 * k];
+            double x_imag = x[8 * i + 2 * k + 1];
+            __m256d x_real_vec = _mm256_set1_pd(x_real);
+            __m256d x_imag_vec = _mm256_set1_pd(x_imag);
+
+            __m256d y_real = _mm256_set_pd(
+                y[8 * k + 6], y[8 * k + 4],
+                y[8 * k + 2], y[8 * k + 0]
+            );
+            __m256d y_imag = _mm256_set_pd(
+                y[8 * k + 7], y[8 * k + 5],
+                y[8 * k + 3], y[8 * k + 1]
+            );
+
+            __m256d pr = _mm256_sub_pd(
+                _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_real_vec, y_real)),
+                _mm256_mul_pd(x_imag_vec, y_imag)
+            );
+            __m256d pi = _mm256_add_pd(
+                _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_imag_vec, y_real)),
+                _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_real_vec, y_imag))
+            );
+
+            real_sum = _mm256_add_pd(real_sum, pr);
+            imag_sum = _mm256_add_pd(imag_sum, pi);
+        }
+
+        double real_data[4], imag_data[4];
+        _mm256_storeu_pd(real_data, real_sum);
+        _mm256_storeu_pd(imag_data, imag_sum);
+        for (int j = 0; j < 4; ++j) {
+            z[8 * i + 2 * j] = real_data[j];
+            z[8 * i + 2 * j + 1] = imag_data[j];
+        }
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+53.2366 cycles
+
+Running: maxperformance
+44.9563 cycles
 <<<
-
+53.2366 / 44.9563 = 1.1841855312826013
 ================================

@@ -56,21 +56,205 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Initialize z to zero using AVX2 vectorized store
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 4; ++i) {
+        _mm256_storeu_pd(z + i * 8, zero);
+        _mm256_storeu_pd(z + i * 8 + 4, zero);
+    }
+
+    // Preload common multiplier constants
+    const __m256d two = _mm256_set1_pd(2.0);
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d acc_real = _mm256_setzero_pd();
+            __m256d acc_imag = _mm256_setzero_pd();
+
+            for (int k = 0; k < 4; ++k) {
+                // Load x and y values
+                __m256d x_vec = _mm256_loadu_pd(x + (i * 4 + k) * 2);
+                __m256d y_vec = _mm256_loadu_pd(y + (k * 4 + j) * 2);
+
+                // Extract real and imaginary parts
+                __m256d x_real = _mm256_permute_pd(x_vec, 0x0);
+                __m256d x_imag = _mm256_permute_pd(x_vec, 0xF);
+                __m256d y_real = _mm256_permute_pd(y_vec, 0x0);
+                __m256d y_imag = _mm256_permute_pd(y_vec, 0xF);
+
+                // Complex multiplication with 2.0 scaling
+                __m256d prod_real = _mm256_sub_pd(
+                    _mm256_mul_pd(_mm256_mul_pd(x_real, y_real), two),
+                    _mm256_mul_pd(x_imag, y_imag)
+                );
+                __m256d prod_imag = _mm256_add_pd(
+                    _mm256_mul_pd(_mm256_mul_pd(x_imag, y_real), two),
+                    _mm256_mul_pd(_mm256_mul_pd(x_real, y_imag), two)
+                );
+
+                // Accumulate results
+                acc_real = _mm256_add_pd(acc_real, prod_real);
+                acc_imag = _mm256_add_pd(acc_imag, prod_imag);
+            }
+
+            // Store results
+            _mm256_storeu_pd(z + (i * 4 + j) * 2, acc_real);
+            _mm256_storeu_pd(z + (i * 4 + j) * 2 + 4, acc_imag);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+54.9264 cycles
+munmap_chunk(): invalid pointer
+Aborted
 <<<
-
+WA
 ================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_storeu_pd(&z[i], zero);
+        _mm256_storeu_pd(&z[i+4], zero);
+        _mm256_storeu_pd(&z[i+8], zero);
+        _mm256_storeu_pd(&z[i+12], zero);
+    }
 
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_vec = _mm256_setzero_pd();
+            __m256d imag_vec = _mm256_setzero_pd();
+
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_vec = _mm256_set_pd(
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2],
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2]
+                );
+
+                __m256d c_vec = _mm256_set_pd(
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2],
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2]
+                );
+
+                __m256d prod_real = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(a_vec, c_vec));
+                __m256d b_vec = _mm256_set_pd(
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2],
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2]
+                );
+                __m256d d_vec = _mm256_set_pd(
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2],
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2]
+                );
+                prod_real = _mm256_sub_pd(prod_real, _mm256_mul_pd(b_vec, d_vec));
+
+                __m256d prod_imag = _mm256_add_pd(
+                    _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(b_vec, c_vec)),
+                    _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(a_vec, d_vec))
+                );
+
+                real_vec = _mm256_add_pd(real_vec, prod_real);
+                imag_vec = _mm256_add_pd(imag_vec, prod_imag);
+            }
+
+            double real_arr[4], imag_arr[4];
+            _mm256_storeu_pd(real_arr, real_vec);
+            _mm256_storeu_pd(imag_arr, imag_vec);
+
+            z[(i * 4 + j) * 2] = real_arr[0] + real_arr[1] + real_arr[2] + real_arr[3];
+            z[(i * 4 + j) * 2 + 1] = imag_arr[0] + imag_arr[1] + imag_arr[2] + imag_arr[3];
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+54.8542 cycles
+Segmentation fault
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d zero = _mm256_setzero_pd();
+    __m256d zero_2 = _mm256_setzero_pd();
+    __m256d zero_3 = _mm256_setzero_pd();
+    __m256d zero_4 = _mm256_setzero_pd();
+
+    _mm256_storeu_pd(z, zero);
+    _mm256_storeu_pd(z + 4, zero_2);
+    _mm256_storeu_pd(z + 8, zero_3);
+    _mm256_storeu_pd(z + 12, zero_4);
+    _mm256_storeu_pd(z + 16, zero);
+    _mm256_storeu_pd(z + 20, zero_2);
+    _mm256_storeu_pd(z + 24, zero_3);
+    _mm256_storeu_pd(z + 28, zero_4);
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d acc_real = _mm256_setzero_pd();
+            __m256d acc_imag = _mm256_setzero_pd();
+
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_vec = _mm256_set_pd(
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2],
+                    0.0,
+                    0.0
+                );
+                __m256d c_vec = _mm256_set_pd(
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2],
+                    0.0,
+                    0.0
+                );
+
+                __m256d prod = _mm256_mul_pd(a_vec, c_vec);
+                __m256d prod_shuf = _mm256_shuffle_pd(prod, prod, 0b0101);
+
+                __m256d real_comp = _mm256_addsub_pd(
+                    _mm256_mul_pd(a_vec, _mm256_permute_pd(c_vec, 0b0101)),
+                    prod_shuf
+                );
+
+                acc_real = _mm256_add_pd(acc_real, real_comp);
+            }
+
+            __m256d final_result = _mm256_hadd_pd(acc_real, acc_real);
+            _mm256_storeu_pd(z + (i * 4 + j) * 2, final_result);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+56.3421 cycles
+
+Running: maxperformance
+114.69 cycles
 <<<
-
+WA
 ================================

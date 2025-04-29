@@ -56,21 +56,203 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 4; ++i) {
+        __m256d acc_real = _mm256_setzero_pd();
+        __m256d acc_imag = _mm256_setzero_pd();
 
+        for (int k = 0; k < 4; ++k) {
+            double a = x[(i * 4 + k) * 2];
+            double b = x[(i * 4 + k) * 2 + 1];
+
+            __m256d avec = _mm256_set1_pd(a);
+            __m256d bvec = _mm256_set1_pd(b);
+
+            __m256d cvec = _mm256_set_pd(
+                y[(k * 4 + 3) * 2],
+                y[(k * 4 + 2) * 2],
+                y[(k * 4 + 1) * 2],
+                y[(k * 4 + 0) * 2]);
+
+            __m256d dvec = _mm256_set_pd(
+                y[(k * 4 + 3) * 2 + 1],
+                y[(k * 4 + 2) * 2 + 1],
+                y[(k * 4 + 1) * 2 + 1],
+                y[(k * 4 + 0) * 2 + 1]);
+
+            __m256d two_a = _mm256_add_pd(avec, avec);
+            __m256d prod_real = _mm256_fmsub_pd(two_a, cvec, _mm256_mul_pd(bvec, dvec));
+            __m256d prod_imag = _mm256_fmadd_pd(_mm256_add_pd(bvec, bvec), cvec, _mm256_mul_pd(two_a, dvec));
+
+            acc_real = _mm256_add_pd(acc_real, prod_real);
+            acc_imag = _mm256_add_pd(acc_imag, prod_imag);
+        }
+
+        double real_buf[4];
+        double imag_buf[4];
+        _mm256_storeu_pd(real_buf, acc_real);
+        _mm256_storeu_pd(imag_buf, acc_imag);
+
+        for (int j = 0; j < 4; ++j) {
+            z[(i * 4 + j) * 2]     = real_buf[j];
+            z[(i * 4 + j) * 2 + 1] = imag_buf[j];
+        }
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+55.2978 cycles
+
+Running: maxperformance
+59.2966 cycles
 <<<
-
+55.2978 / 59.2966 = 0.9325627439009995
 ================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m256d zero = _mm256_setzero_pd();
+    for (int idx = 0; idx < 32; idx += 4) {
+        _mm256_storeu_pd(z + idx, zero);
+    }
 
+    __m256d ax[4], bx[4];
+    for (int i = 0; i < 4; ++i) {
+        ax[i] = _mm256_set_pd(
+            x[(i * 4 + 3) * 2],
+            x[(i * 4 + 2) * 2],
+            x[(i * 4 + 1) * 2],
+            x[(i * 4 + 0) * 2]);
+
+        bx[i] = _mm256_set_pd(
+            x[(i * 4 + 3) * 2 + 1],
+            x[(i * 4 + 2) * 2 + 1],
+            x[(i * 4 + 1) * 2 + 1],
+            x[(i * 4 + 0) * 2 + 1]);
+    }
+
+    __m256d cy[4], dy[4];
+    for (int j = 0; j < 4; ++j) {
+        cy[j] = _mm256_set_pd(
+            y[(3 * 4 + j) * 2],
+            y[(2 * 4 + j) * 2],
+            y[(1 * 4 + j) * 2],
+            y[(0 * 4 + j) * 2]);
+
+        dy[j] = _mm256_set_pd(
+            y[(3 * 4 + j) * 2 + 1],
+            y[(2 * 4 + j) * 2 + 1],
+            y[(1 * 4 + j) * 2 + 1],
+            y[(0 * 4 + j) * 2 + 1]);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        __m256d a_vec = ax[i];
+        __m256d b_vec = bx[i];
+
+        for (int j = 0; j < 4; ++j) {
+            __m256d c_vec = cy[j];
+            __m256d d_vec = dy[j];
+
+            __m256d real_vec = _mm256_mul_pd(a_vec, c_vec);
+            real_vec = _mm256_add_pd(real_vec, real_vec);
+            real_vec = _mm256_fnmadd_pd(b_vec, d_vec, real_vec);
+
+            __m256d imag_vec = _mm256_mul_pd(b_vec, c_vec);
+            imag_vec = _mm256_add_pd(imag_vec, imag_vec);
+            __m256d tmp = _mm256_mul_pd(a_vec, d_vec);
+            tmp = _mm256_add_pd(tmp, tmp);
+            imag_vec = _mm256_add_pd(imag_vec, tmp);
+
+            __m128d rl = _mm256_castpd256_pd128(real_vec);
+            __m128d rh = _mm256_extractf128_pd(real_vec, 1);
+            __m128d rs = _mm_add_pd(rl, rh);
+            rs = _mm_hadd_pd(rs, rs);
+            double real_sum = _mm_cvtsd_f64(rs);
+
+            __m128d il = _mm256_castpd256_pd128(imag_vec);
+            __m128d ih = _mm256_extractf128_pd(imag_vec, 1);
+            __m128d is = _mm_add_pd(il, ih);
+            is = _mm_hadd_pd(is, is);
+            double imag_sum = _mm_cvtsd_f64(is);
+
+            int idx = (i * 4 + j) * 2;
+            z[idx]     = real_sum;
+            z[idx + 1] = imag_sum;
+        }
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+54.8749 cycles
+
+Running: maxperformance
+109.054 cycles
 <<<
-
+54.8749 / 109.054 = 0.5031901626717039
 ================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d vzero = _mm256_setzero_pd();
+#pragma GCC unroll 8
+    for (int idx = 0; idx < 32; idx += 4)
+        _mm256_storeu_pd(z + idx, vzero);
 
+    double yr[4][4], yi[4][4];
+    for (int k = 0; k < 4; ++k) {
+        const double *yk = y + k * 8;
+        yr[k][0] = yk[0];  yi[k][0] = yk[1];
+        yr[k][1] = yk[2];  yi[k][1] = yk[3];
+        yr[k][2] = yk[4];  yi[k][2] = yk[5];
+        yr[k][3] = yk[6];  yi[k][3] = yk[7];
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        const double *xi = x + i * 8;
+        const double ax0 = xi[0], bx0 = xi[1];
+        const double ax1 = xi[2], bx1 = xi[3];
+        const double ax2 = xi[4], bx2 = xi[5];
+        const double ax3 = xi[6], bx3 = xi[7];
+
+        for (int j = 0; j < 4; ++j) {
+            const double cy0 = yr[0][j], dy0 = yi[0][j];
+            const double cy1 = yr[1][j], dy1 = yi[1][j];
+            const double cy2 = yr[2][j], dy2 = yi[2][j];
+            const double cy3 = yr[3][j], dy3 = yi[3][j];
+
+            double real = (2.0 * ax0 * cy0 - bx0 * dy0) +
+                          (2.0 * ax1 * cy1 - bx1 * dy1) +
+                          (2.0 * ax2 * cy2 - bx2 * dy2) +
+                          (2.0 * ax3 * cy3 - bx3 * dy3);
+
+            double imag = (2.0 * bx0 * cy0 + 2.0 * ax0 * dy0) +
+                          (2.0 * bx1 * cy1 + 2.0 * ax1 * dy1) +
+                          (2.0 * bx2 * cy2 + 2.0 * ax2 * dy2) +
+                          (2.0 * bx3 * cy3 + 2.0 * ax3 * dy3);
+
+            z[(i * 4 + j) * 2]     = real;
+            z[(i * 4 + j) * 2 + 1] = imag;
+        }
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+54.8605 cycles
+
+Running: maxperformance
+83.215 cycles
 <<<
-
+54.8605 / 83.215 = 0.6592621522562038
 ================================

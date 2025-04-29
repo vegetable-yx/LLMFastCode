@@ -56,21 +56,163 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d z_zero = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_store_pd(z + i, z_zero);
+    }
+
+    __m256d x_0, x_1, x_2, x_3;
+    __m256d y_0, y_1, y_2, y_3;
+    __m256d z_real, z_imag;
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            z_real = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+            z_imag = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+
+            for (int k = 0; k < 4; ++k) {
+                x_0 = _mm256_load_pd(x + (i * 4 + k) * 2);
+                y_0 = _mm256_load_pd(y + (k * 4 + j) * 2);
+
+                __m256d a = _mm256_unpacklo_pd(x_0, x_0);
+                __m256d b = _mm256_unpackhi_pd(x_0, x_0);
+                __m256d c = _mm256_unpacklo_pd(y_0, y_0);
+                __m256d d = _mm256_unpackhi_pd(y_0, y_0);
+
+                __m256d prod_real = _mm256_sub_pd(_mm256_mul_pd(_mm256_mul_pd(a, c), _mm256_set_pd(2.0, 2.0, 2.0, 2.0)), _mm256_mul_pd(b, d));
+                __m256d prod_imag = _mm256_add_pd(_mm256_mul_pd(_mm256_mul_pd(b, c), _mm256_set_pd(2.0, 2.0, 2.0, 2.0)), _mm256_mul_pd(_mm256_mul_pd(a, d), _mm256_set_pd(2.0, 2.0, 2.0, 2.0)));
+
+                z_real = _mm256_add_pd(z_real, prod_real);
+                z_imag = _mm256_add_pd(z_imag, prod_imag);
+            }
+
+            _mm256_store_pd(z + (i * 4 + j) * 2, z_real);
+            _mm256_store_pd(z + (i * 4 + j) * 2 + 1, z_imag);
+        }
+    }
+}
 
 >>>
-
+Starting program. 2 functions registered.
+Segmentation fault
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Initialize z to zero
+    __m256d z_zero = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_store_pd(&z[i], z_zero);
+    }
+
+    // Loop unrolling for better performance
+    for (int i = 0; i < 4; ++i) {
+        __m256d x0 = _mm256_set_pd(x[(i * 4) * 2 + 1], x[(i * 4) * 2], x[(i * 4 + 1) * 2 + 1], x[(i * 4 + 1) * 2]);
+        __m256d x1 = _mm256_set_pd(x[(i * 4 + 2) * 2 + 1], x[(i * 4 + 2) * 2], x[(i * 4 + 3) * 2 + 1], x[(i * 4 + 3) * 2]);
+        for (int j = 0; j < 4; ++j) {
+            __m256d y0 = _mm256_set_pd(y[(j * 4 + 2) * 2 + 1], y[(j * 4 + 2) * 2], y[(j * 4 + 3) * 2 + 1], y[(j * 4 + 3) * 2]);
+            __m256d y1 = _mm256_set_pd(y[(j * 4) * 2 + 1], y[(j * 4) * 2], y[(j * 4 + 1) * 2 + 1], y[(j * 4 + 1) * 2]);
+
+            __m256d real = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+            __m256d imag = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+
+            for (int k = 0; k < 4; ++k) {
+                __m256d a = _mm256_set_pd(x[(i * 4 + k) * 2 + 1], x[(i * 4 + k) * 2], x[(i * 4 + k) * 2 + 1], x[(i * 4 + k) * 2]);
+                __m256d c = _mm256_set_pd(y[(k * 4 + j) * 2 + 1], y[(k * 4 + j) * 2], y[(k * 4 + j) * 2 + 1], y[(k * 4 + j) * 2]);
+                __m256d b = _mm256_mul_pd(a, _mm256_set_pd(-1.0, 1.0, -1.0, 1.0));
+                __m256d d = _mm256_mul_pd(c, _mm256_set_pd(-1.0, 1.0, -1.0, 1.0));
+
+                __m256d prod_real = _mm256_sub_pd(_mm256_mul_pd(a, c), _mm256_mul_pd(b, d));
+                __m256d prod_imag = _mm256_add_pd(_mm256_mul_pd(_mm256_add_pd(a, b), c), _mm256_mul_pd(_mm256_sub_pd(a, b), d));
+
+                real = _mm256_add_pd(real, prod_real);
+                imag = _mm256_add_pd(imag, prod_imag);
+            }
+
+            _mm256_store_pd(&z[(i * 4 + j) * 2], real);
+            _mm256_store_pd(&z[(i * 4 + j) * 2 + 1], imag);
+        }
+    }
+}
 
 >>>
-
+Starting program. 2 functions registered.
+Segmentation fault
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d z_zero = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_store_pd(z + i, z_zero);
+    }
+
+    __m256d x_0, x_1, y_0, y_1;
+    __m256d prod_real_0, prod_real_1, prod_imag_0, prod_imag_1;
+    __m256d sum_real_0 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    __m256d sum_real_1 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    __m256d sum_imag_0 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+    __m256d sum_imag_1 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; j += 2) {
+            sum_real_0 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+            sum_real_1 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+            sum_imag_0 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+            sum_imag_1 = _mm256_set_pd(0.0, 0.0, 0.0, 0.0);
+
+            for (int k = 0; k < 4; ++k) {
+                x_0 = _mm256_load_pd(x + (i * 4 + k) * 2);
+                y_0 = _mm256_load_pd(y + (k * 4 + j) * 2);
+
+                prod_real_0 = _mm256_mul_pd(x_0, y_0);
+                prod_imag_0 = _mm256_mul_pd(x_0, y_0);
+
+                x_1 = _mm256_permute4x64_pd(x_0, 0x4E);
+                y_1 = _mm256_permute4x64_pd(y_0, 0x4E);
+
+                prod_real_1 = _mm256_mul_pd(x_1, y_1);
+                prod_imag_1 = _mm256_mul_pd(x_1, y_1);
+
+                prod_real_0 = _mm256_add_pd(
+                    _mm256_sub_pd(_mm256_mul_pd(_mm256_set_pd(2.0, 2.0, 2.0, 2.0), prod_real_0), prod_imag_1),
+                    _mm256_mul_pd(_mm256_set_pd(2.0, 2.0, 2.0, 2.0), prod_real_1)
+                );
+                prod_imag_0 = _mm256_add_pd(
+                    _mm256_add_pd(_mm256_mul_pd(_mm256_set_pd(2.0, 2.0, 2.0, 2.0), prod_imag_0), prod_real_1),
+                    _mm256_mul_pd(_mm256_set_pd(2.0, 2.0, 2.0, 2.0), prod_imag_1)
+                );
+
+                sum_real_0 = _mm256_add_pd(sum_real_0, prod_real_0);
+                sum_imag_0 = _mm256_add_pd(sum_imag_0, prod_imag_0);
+                sum_real_1 = _mm256_add_pd(sum_real_1, prod_real_1);
+                sum_imag_1 = _mm256_add_pd(sum_imag_1, prod_imag_1);
+            }
+
+            _mm256_store_pd(z + (i * 4 + j) * 2, sum_real_0);
+            _mm256_store_pd(z + (i * 4 + j) * 2 + 1, sum_imag_0);
+            _mm256_store_pd(z + (i * 4 + j + 1) * 2, sum_real_1);
+            _mm256_store_pd(z + (i * 4 + j + 1) * 2 + 1, sum_imag_1);
+        }
+    }
+}
 
 >>>
-
+Starting program. 2 functions registered.
+Segmentation fault
 <<<
-
+WA
 ================================

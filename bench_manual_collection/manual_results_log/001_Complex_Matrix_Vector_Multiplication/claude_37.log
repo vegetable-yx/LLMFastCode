@@ -56,21 +56,974 @@ void slow_performance(double *__restrict x, double *__restrict y, double *__rest
 
 
 ================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Zero out z using AVX
+    __m256d zero = _mm256_setzero_pd();
+    _mm256_store_pd(&z[0], zero);
+    _mm256_store_pd(&z[4], zero);
+    _mm256_store_pd(&z[8], zero);
+    _mm256_store_pd(&z[12], zero);
+    _mm256_store_pd(&z[16], zero);
+    _mm256_store_pd(&z[20], zero);
+    _mm256_store_pd(&z[24], zero);
+    _mm256_store_pd(&z[28], zero);
 
+    // Precompute constants
+    const double two = 2.0;
+
+    // Process each output element
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            // Initialize accumulators
+            double real_sum = 0.0;
+            double imag_sum = 0.0;
+            
+            // Process all k values for current i,j
+            for (int k = 0; k < 4; ++k) {
+                // Load x values for current i,k
+                const double a = x[(i * 4 + k) * 2];
+                const double b = x[(i * 4 + k) * 2 + 1];
+                
+                // Load y values for current k,j
+                const double c = y[(k * 4 + j) * 2];
+                const double d = y[(k * 4 + j) * 2 + 1];
+                
+                // Compute products - separated to exploit instruction parallelism
+                const double ac = a * c;
+                const double ad = a * d;
+                const double bc = b * c;
+                const double bd = b * d;
+                
+                // Accumulate real part: 2*a*c - b*d
+                real_sum += two * ac - bd;
+                
+                // Accumulate imaginary part: 2*b*c + 2*a*d
+                imag_sum += two * bc + two * ad;
+            }
+            
+            // Store results
+            z[(i * 4 + j) * 2] = real_sum;
+            z[(i * 4 + j) * 2 + 1] = imag_sum;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+54.8734 cycles
+
+Running: maxperformance
+44.8189 cycles
 <<<
-
+54.8734 / 44.8189 = 1.224336161753189
 ================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Initialize z with zeros using AVX2
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_storeu_pd(&z[i], zero);
+    }
 
+    const double two = 2.0;
+
+    // i=0 row
+    // Cell (0,0)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[0], b = x[1];
+            const double c = y[0], d = y[1];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[2], b = x[3];
+            const double c = y[8], d = y[9];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[4], b = x[5];
+            const double c = y[16], d = y[17];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[6], b = x[7];
+            const double c = y[24], d = y[25];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[0] = real;
+        z[1] = imag;
+    }
+
+    // Cell (0,1)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[0], b = x[1];
+            const double c = y[2], d = y[3];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[2], b = x[3];
+            const double c = y[10], d = y[11];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[4], b = x[5];
+            const double c = y[18], d = y[19];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[6], b = x[7];
+            const double c = y[26], d = y[27];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[2] = real;
+        z[3] = imag;
+    }
+
+    // Cell (0,2)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[0], b = x[1];
+            const double c = y[4], d = y[5];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[2], b = x[3];
+            const double c = y[12], d = y[13];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[4], b = x[5];
+            const double c = y[20], d = y[21];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[6], b = x[7];
+            const double c = y[28], d = y[29];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[4] = real;
+        z[5] = imag;
+    }
+
+    // Cell (0,3)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[0], b = x[1];
+            const double c = y[6], d = y[7];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[2], b = x[3];
+            const double c = y[14], d = y[15];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[4], b = x[5];
+            const double c = y[22], d = y[23];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[6], b = x[7];
+            const double c = y[30], d = y[31];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[6] = real;
+        z[7] = imag;
+    }
+
+    // i=1 row
+    // Cell (1,0)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[8], b = x[9];
+            const double c = y[0], d = y[1];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[10], b = x[11];
+            const double c = y[8], d = y[9];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[12], b = x[13];
+            const double c = y[16], d = y[17];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[14], b = x[15];
+            const double c = y[24], d = y[25];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[8] = real;
+        z[9] = imag;
+    }
+
+    // Cell (1,1)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[8], b = x[9];
+            const double c = y[2], d = y[3];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[10], b = x[11];
+            const double c = y[10], d = y[11];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[12], b = x[13];
+            const double c = y[18], d = y[19];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[14], b = x[15];
+            const double c = y[26], d = y[27];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[10] = real;
+        z[11] = imag;
+    }
+
+    // Cell (1,2)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[8], b = x[9];
+            const double c = y[4], d = y[5];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[10], b = x[11];
+            const double c = y[12], d = y[13];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[12], b = x[13];
+            const double c = y[20], d = y[21];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[14], b = x[15];
+            const double c = y[28], d = y[29];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[12] = real;
+        z[13] = imag;
+    }
+
+    // Cell (1,3)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[8], b = x[9];
+            const double c = y[6], d = y[7];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[10], b = x[11];
+            const double c = y[14], d = y[15];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[12], b = x[13];
+            const double c = y[22], d = y[23];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[14], b = x[15];
+            const double c = y[30], d = y[31];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[14] = real;
+        z[15] = imag;
+    }
+
+    // i=2 row
+    // Cell (2,0)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[16], b = x[17];
+            const double c = y[0], d = y[1];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[18], b = x[19];
+            const double c = y[8], d = y[9];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[20], b = x[21];
+            const double c = y[16], d = y[17];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[22], b = x[23];
+            const double c = y[24], d = y[25];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[16] = real;
+        z[17] = imag;
+    }
+
+    // Cell (2,1)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[16], b = x[17];
+            const double c = y[2], d = y[3];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[18], b = x[19];
+            const double c = y[10], d = y[11];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[20], b = x[21];
+            const double c = y[18], d = y[19];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[22], b = x[23];
+            const double c = y[26], d = y[27];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[18] = real;
+        z[19] = imag;
+    }
+
+    // Cell (2,2)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[16], b = x[17];
+            const double c = y[4], d = y[5];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[18], b = x[19];
+            const double c = y[12], d = y[13];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[20], b = x[21];
+            const double c = y[20], d = y[21];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[22], b = x[23];
+            const double c = y[28], d = y[29];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[20] = real;
+        z[21] = imag;
+    }
+
+    // Cell (2,3)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[16], b = x[17];
+            const double c = y[6], d = y[7];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[18], b = x[19];
+            const double c = y[14], d = y[15];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[20], b = x[21];
+            const double c = y[22], d = y[23];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[22], b = x[23];
+            const double c = y[30], d = y[31];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[22] = real;
+        z[23] = imag;
+    }
+
+    // i=3 row
+    // Cell (3,0)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[24], b = x[25];
+            const double c = y[0], d = y[1];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[26], b = x[27];
+            const double c = y[8], d = y[9];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[28], b = x[29];
+            const double c = y[16], d = y[17];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[30], b = x[31];
+            const double c = y[24], d = y[25];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[24] = real;
+        z[25] = imag;
+    }
+
+    // Cell (3,1)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[24], b = x[25];
+            const double c = y[2], d = y[3];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[26], b = x[27];
+            const double c = y[10], d = y[11];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[28], b = x[29];
+            const double c = y[18], d = y[19];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[30], b = x[31];
+            const double c = y[26], d = y[27];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[26] = real;
+        z[27] = imag;
+    }
+
+    // Cell (3,2)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[24], b = x[25];
+            const double c = y[4], d = y[5];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[26], b = x[27];
+            const double c = y[12], d = y[13];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[28], b = x[29];
+            const double c = y[20], d = y[21];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[30], b = x[31];
+            const double c = y[28], d = y[29];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[28] = real;
+        z[29] = imag;
+    }
+
+    // Cell (3,3)
+    {
+        double real = 0.0, imag = 0.0;
+        
+        // k=0
+        {
+            const double a = x[24], b = x[25];
+            const double c = y[6], d = y[7];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=1
+        {
+            const double a = x[26], b = x[27];
+            const double c = y[14], d = y[15];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=2
+        {
+            const double a = x[28], b = x[29];
+            const double c = y[22], d = y[23];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        // k=3
+        {
+            const double a = x[30], b = x[31];
+            const double c = y[30], d = y[31];
+            const double ac = a * c;
+            const double bd = b * d;
+            const double bc_ad = b * c + a * d;
+            real += two * ac - bd;
+            imag += two * bc_ad;
+        }
+        
+        z[30] = real;
+        z[31] = imag;
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+54.9773 cycles
+
+Running: maxperformance
+118.311 cycles
 <<<
-
+54.9773 / 118.311 = 0.46468460244609544
 ================================
+```c++
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Set all z values to 0 using AVX2
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_store_pd(&z[i], zero);
+    }
 
+    // Pre-compute indices and use SIMD for complex matrix multiplication
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d sum = _mm256_setzero_pd(); // [real, imag, real, imag]
+            
+            // Process two k values at once
+            for (int k = 0; k < 4; k += 2) {
+                // Load x values: [a0, b0, a1, b1]
+                __m256d x_vals = _mm256_set_pd(
+                    x[(i * 4 + k + 1) * 2 + 1],
+                    x[(i * 4 + k + 1) * 2],
+                    x[(i * 4 + k) * 2 + 1],
+                    x[(i * 4 + k) * 2]
+                );
+                
+                // Load y values for first complex number: [c0, d0, c0, d0]
+                __m256d y_vals0 = _mm256_set_pd(
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2],
+                    y[(k * 4 + j) * 2 + 1],
+                    y[(k * 4 + j) * 2]
+                );
+                
+                // Load y values for second complex number: [c1, d1, c1, d1]
+                __m256d y_vals1 = _mm256_set_pd(
+                    y[((k+1) * 4 + j) * 2 + 1],
+                    y[((k+1) * 4 + j) * 2],
+                    y[((k+1) * 4 + j) * 2 + 1],
+                    y[((k+1) * 4 + j) * 2]
+                );
+                
+                // Shuffle x to get [a0, a0, b0, b0]
+                __m256d x_real_imag0 = _mm256_permute4x64_pd(x_vals, 0x50);
+                
+                // Shuffle x to get [a1, a1, b1, b1]
+                __m256d x_real_imag1 = _mm256_permute4x64_pd(x_vals, 0xFA);
+                
+                // Shuffle y to get [c0, d0, c0, d0]
+                __m256d y_real_imag0 = _mm256_permute4x64_pd(y_vals0, 0xD8);
+                
+                // Shuffle y to get [c1, d1, c1, d1]
+                __m256d y_real_imag1 = _mm256_permute4x64_pd(y_vals1, 0xD8);
+                
+                // Calculate products for k=0
+                __m256d prod0 = _mm256_mul_pd(x_real_imag0, y_real_imag0);
+                
+                // Calculate products for k=1
+                __m256d prod1 = _mm256_mul_pd(x_real_imag1, y_real_imag1);
+                
+                // Sum the products
+                prod0 = _mm256_add_pd(prod0, prod1);
+                
+                // Swap to get [ac, bd, bc, ad]
+                __m256d swapped = _mm256_permute4x64_pd(prod0, 0xB1);
+                
+                // Create a mask for negating bd
+                __m256d mask = _mm256_set_pd(1.0, 1.0, -1.0, 1.0);
+                
+                // Apply mask to swapped (negate bd)
+                __m256d masked = _mm256_mul_pd(swapped, mask);
+                
+                // Compute 2.0 * (ac - bd, bc + ad)
+                __m256d two = _mm256_set1_pd(2.0);
+                __m256d result = _mm256_mul_pd(masked, two);
+                
+                // Accumulate result
+                sum = _mm256_add_pd(sum, result);
+            }
+            
+            // Store result
+            z[(i * 4 + j) * 2] = sum[0];     // real part
+            z[(i * 4 + j) * 2 + 1] = sum[2]; // imaginary part
+        }
+    }
+}
+```
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+54.889 cycles
+
+Running: maxperformance
+57.1888 cycles
 <<<
-
+WA
 ================================

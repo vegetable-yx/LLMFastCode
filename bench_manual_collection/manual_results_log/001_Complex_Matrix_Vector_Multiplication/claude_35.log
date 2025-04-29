@@ -1,4 +1,4 @@
-Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical.  
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
 Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
 
 **Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**

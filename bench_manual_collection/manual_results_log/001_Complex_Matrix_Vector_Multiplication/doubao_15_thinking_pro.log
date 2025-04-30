@@ -1,0 +1,233 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0;
+            double imag = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                double a = x[(i * 4 + k) * 2];
+                double b = x[(i * 4 + k) * 2 + 1];
+
+                double c = y[(k * 4 + j) * 2];
+                double d = y[(k * 4 + j) * 2 + 1];
+
+                double prod_real = 2.0 * a * c - b * d;
+                double prod_imag = 2.0 * b * c + 2.0 * a * d;
+
+                real += prod_real;
+                imag += prod_imag;
+            }
+
+            z[(i * 4 + j) * 2] = real;
+            z[(i * 4 + j) * 2 + 1] = imag;
+        }
+    }
+}
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+
+```c
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0, imag = 0.0;
+
+            // k=0
+            double a0 = x[2*(i*4 + 0)];
+            double b0 = x[2*(i*4 + 0) + 1];
+            double c0 = y[2*(0*4 + j)];
+            double d0 = y[2*(0*4 + j) + 1];
+            real += 2.0*a0*c0 - b0*d0;
+            imag += 2.0*b0*c0 + 2.0*a0*d0;
+
+            // k=1
+            double a1 = x[2*(i*4 + 1)];
+            double b1 = x[2*(i*4 + 1) + 1];
+            double c1 = y[2*(1*4 + j)];
+            double d1 = y[2*(1*4 + j) + 1];
+            real += 2.0*a1*c1 - b1*d1;
+            imag += 2.0*b1*c1 + 2.0*a1*d1;
+
+            // k=2
+            double a2 = x[2*(i*4 + 2)];
+            double b2 = x[2*(i*4 + 2) + 1];
+            double c2 = y[2*(2*4 + j)];
+            double d2 = y[2*(2*4 + j) + 1];
+            real += 2.0*a2*c2 - b2*d2;
+            imag += 2.0*b2*c2 + 2.0*a2*d2;
+
+            // k=3
+            double a3 = x[2*(i*4 + 3)];
+            double b3 = x[2*(i*4 + 3) + 1];
+            double c3 = y[2*(3*4 + j)];
+            double d3 = y[2*(3*4 + j) + 1];
+            real += 2.0*a3*c3 - b3*d3;
+            imag += 2.0*b3*c3 + 2.0*a3*d3;
+
+            z[2*(i*4 + j)] = real;
+            z[2*(i*4 + j) + 1] = imag;
+        }
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+55.1637 cycles
+
+Running: max_performance
+53.1216 cycles
+<<<
+55.1637 / 53.1216 = 1.03844199
+================================
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 32; i += 4) {
+        _mm256_store_pd(&z[i], zero);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0, imag = 0.0;
+
+            // k=0
+            double a = x[8*i + 0];
+            double b = x[8*i + 1];
+            double c = y[0*8 + 2*j];
+            double d = y[0*8 + 2*j + 1];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+
+            // k=1
+            a = x[8*i + 2];
+            b = x[8*i + 3];
+            c = y[1*8 + 2*j];
+            d = y[1*8 + 2*j + 1];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+
+            // k=2
+            a = x[8*i + 4];
+            b = x[8*i + 5];
+            c = y[2*8 + 2*j];
+            d = y[2*8 + 2*j + 1];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+
+            // k=3
+            a = x[8*i + 6];
+            b = x[8*i + 7];
+            c = y[3*8 + 2*j];
+            d = y[3*8 + 2*j + 1];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+
+            z[2*(4*i + j)] = real;
+            z[2*(4*i + j) + 1] = imag;
+        }
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+55.0831 cycles
+
+Running: max_performance
+53.1902 cycles
+<<<
+55.0831 / 53.1902 = 1.035587383
+================================
+
+```c
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0, imag = 0.0;
+            
+            // k=0
+            double a = x[8*i + 0], b = x[8*i + 1];
+            double c = y[2*j + 0], d = y[2*j + 1];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+            
+            // k=1
+            a = x[8*i + 2]; b = x[8*i + 3];
+            c = y[2*j + 8]; d = y[2*j + 9];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+            
+            // k=2
+            a = x[8*i + 4]; b = x[8*i + 5];
+            c = y[2*j + 16]; d = y[2*j + 17];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+            
+            // k=3
+            a = x[8*i + 6]; b = x[8*i + 7];
+            c = y[2*j + 24]; d = y[2*j + 25];
+            real += 2.0*a*c - b*d;
+            imag += 2.0*b*c + 2.0*a*d;
+            
+            z[2*(4*i + j)] = real;
+            z[2*(4*i + j) + 1] = imag;
+        }
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+56.6075 cycles
+
+Running: max_performance
+53.0501 cycles
+<<<
+56.6075 / 53.0501 = 1.067057367
+================================

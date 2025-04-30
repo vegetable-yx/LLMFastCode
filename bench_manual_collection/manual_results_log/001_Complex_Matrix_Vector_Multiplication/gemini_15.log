@@ -1,0 +1,167 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0;
+            double imag = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                double a = x[(i * 4 + k) * 2];
+                double b = x[(i * 4 + k) * 2 + 1];
+
+                double c = y[(k * 4 + j) * 2];
+                double d = y[(k * 4 + j) * 2 + 1];
+
+                double prod_real = 2.0 * a * c - b * d;
+                double prod_imag = 2.0 * b * c + 2.0 * a * d;
+
+                real += prod_real;
+                imag += prod_imag;
+            }
+
+            z[(i * 4 + j) * 2] = real;
+            z[(i * 4 + j) * 2 + 1] = imag;
+        }
+    }
+}
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+```c++
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+  for (int i = 0; i < 32; i += 2) {
+    _mm256d z_ = _mm256_setzero_pd();
+    for (int k = 0; k < 16; k += 4) {
+      __m256d x1 = _mm256_loadu_pd(&x[k * 2]);
+      __m256d x2 = _mm256_loadu_pd(&x[k * 2 + 8]);
+      for (int j = 0; j < 16; j += 4) {
+        __m256d y1 = _mm256_loadu_pd(&y[j * 2]);
+        __m256d y2 = _mm256_loadu_pd(&y[j * 2 + 8]);
+
+        __m256d a1 = _mm256_unpacklo_pd(x1, x2);
+        __m256d b1 = _mm256_unpackhi_pd(x1, x2);
+
+        __m256d c1 = _mm256_unpacklo_pd(y1, y2);
+        __m256d d1 = _mm256_unpackhi_pd(y1, y2);
+
+        z_ = _mm256_fmadd_pd(a1, c1, z_);
+        z_ = _mm256_fmadd_pd(b1, d1, z_);
+      }
+    }
+    __m256d z_2 = _mm256_permute4x64_pd(z_, 0b10001101);
+    z_ = _mm256_add_pd(z_, z_2);
+    _mm256_storeu_pd(&z[i], z_);
+  }
+}
+```
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+```c++
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  for (int i = 0; i < 32; ++i) {
+    z[i] = 0.0;
+  }
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      __m256d z_vec = _mm256_setzero_pd();
+      for (int k = 0; k < 4; ++k) {
+        __m256d x_vec = _mm256_loadu_pd(&x[(i * 4 + k) * 2]);
+        __m256d y_vec = _mm256_loadu_pd(&y[(k * 4 + j) * 2]);
+        
+        __m256d prod_vec = _mm256_mul_pd(x_vec, y_vec);
+        prod_vec = _mm256_add_pd(prod_vec, _mm256_permute4x64_pd(prod_vec, 0b01001110));
+        z_vec = _mm256_add_pd(z_vec, prod_vec);
+      }
+      _mm256_storeu_pd(&z[(i * 4 + j) * 2], z_vec);
+    }
+  }
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+54.5877 cycles
+
+Running: max_performance
+70.9566 cycles
+<<<
+WA
+================================
+```c++
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+  for (int i = 0; i < 32; ++i) {
+    z[i] = 0.0;
+  }
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      __m256d z_vec = _mm256_setzero_pd();
+      for (int k = 0; k < 4; ++k) {
+        __m256d x_vec = _mm256_loadu_pd(&x[((i * 4 + k) * 2)]);
+        __m256d y_vec = _mm256_loadu_pd(&y[(k * 4 + j) * 2]);
+
+        z_vec = _mm256_fmadd_pd(
+            _mm256_mul_pd(x_vec, _mm256_setr_pd(2.0, 2.0, 2.0, 2.0)),
+            y_vec,
+            z_vec);
+      }
+      _mm256_storeu_pd(&z[(i * 4 + j) * 2], z_vec);
+    }
+  }
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+55.2033 cycles
+
+Running: max_performance
+28.4097 cycles
+<<<
+WA
+================================

@@ -1,0 +1,275 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0;
+            double imag = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                double a = x[(i * 4 + k) * 2];
+                double b = x[(i * 4 + k) * 2 + 1];
+
+                double c = y[(k * 4 + j) * 2];
+                double d = y[(k * 4 + j) * 2 + 1];
+
+                double prod_real = 2.0 * a * c - b * d;
+                double prod_imag = 2.0 * b * c + 2.0 * a * d;
+
+                real += prod_real;
+                imag += prod_imag;
+            }
+
+            z[(i * 4 + j) * 2] = real;
+            z[(i * 4 + j) * 2 + 1] = imag;
+        }
+    }
+}
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int k = 0; k < 4; ++k) {
+            const int x_index = ((i << 2) + k) << 1;
+            const double a = x[x_index];
+            const double b = x[x_index + 1];
+            const double two_a = a + a;
+            const double two_b = b + b;
+
+            const int y_base = ((k << 2) << 1);
+            const double c0 = y[y_base];
+            const double d0 = y[y_base + 1];
+            const double c1 = y[y_base + 2];
+            const double d1 = y[y_base + 3];
+            const double c2 = y[y_base + 4];
+            const double d2 = y[y_base + 5];
+            const double c3 = y[y_base + 6];
+            const double d3 = y[y_base + 7];
+
+            const double real0 = two_a * c0 - b * d0;
+            const double imag0 = two_b * c0 + two_a * d0;
+            const double real1 = two_a * c1 - b * d1;
+            const double imag1 = two_b * c1 + two_a * d1;
+            const double real2 = two_a * c2 - b * d2;
+            const double imag2 = two_b * c2 + two_a * d2;
+            const double real3 = two_a * c3 - b * d3;
+            const double imag3 = two_b * c3 + two_a * d3;
+
+            const int z_base = (i << 4) + (i << 2);
+            z[z_base]        += real0;
+            z[z_base + 1]    += imag0;
+            z[z_base + 2]    += real1;
+            z[z_base + 3]    += imag1;
+            z[z_base + 4]    += real2;
+            z[z_base + 5]    += imag2;
+            z[z_base + 6]    += real3;
+            z[z_base + 7]    += imag3;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9430.71 cycles
+
+Running: max_performance
+221.036 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    __m256d vzero = _mm256_setzero_pd();
+    _mm256_storeu_pd(z + 0, vzero);
+    _mm256_storeu_pd(z + 4, vzero);
+    _mm256_storeu_pd(z + 8, vzero);
+    _mm256_storeu_pd(z + 12, vzero);
+    _mm256_storeu_pd(z + 16, vzero);
+    _mm256_storeu_pd(z + 20, vzero);
+    _mm256_storeu_pd(z + 24, vzero);
+    _mm256_storeu_pd(z + 28, vzero);
+    
+    double x_real[4][4], x_imag[4][4];
+    double y_real[4][4], y_imag[4][4];
+
+    x_real[0][0] = x[0]; x_imag[0][0] = x[1];
+    x_real[0][1] = x[2]; x_imag[0][1] = x[3];
+    x_real[0][2] = x[4]; x_imag[0][2] = x[5];
+    x_real[0][3] = x[6]; x_imag[0][3] = x[7];
+
+    x_real[1][0] = x[8]; x_imag[1][0] = x[9];
+    x_real[1][1] = x[10]; x_imag[1][1] = x[11];
+    x_real[1][2] = x[12]; x_imag[1][2] = x[13];
+    x_real[1][3] = x[14]; x_imag[1][3] = x[15];
+
+    x_real[2][0] = x[16]; x_imag[2][0] = x[17];
+    x_real[2][1] = x[18]; x_imag[2][1] = x[19];
+    x_real[2][2] = x[20]; x_imag[2][2] = x[21];
+    x_real[2][3] = x[22]; x_imag[2][3] = x[23];
+
+    x_real[3][0] = x[24]; x_imag[3][0] = x[25];
+    x_real[3][1] = x[26]; x_imag[3][1] = x[27];
+    x_real[3][2] = x[28]; x_imag[3][2] = x[29];
+    x_real[3][3] = x[30]; x_imag[3][3] = x[31];
+
+    y_real[0][0] = y[0]; y_imag[0][0] = y[1];
+    y_real[0][1] = y[2]; y_imag[0][1] = y[3];
+    y_real[0][2] = y[4]; y_imag[0][2] = y[5];
+    y_real[0][3] = y[6]; y_imag[0][3] = y[7];
+
+    y_real[1][0] = y[8]; y_imag[1][0] = y[9];
+    y_real[1][1] = y[10]; y_imag[1][1] = y[11];
+    y_real[1][2] = y[12]; y_imag[1][2] = y[13];
+    y_real[1][3] = y[14]; y_imag[1][3] = y[15];
+
+    y_real[2][0] = y[16]; y_imag[2][0] = y[17];
+    y_real[2][1] = y[18]; y_imag[2][1] = y[19];
+    y_real[2][2] = y[20]; y_imag[2][2] = y[21];
+    y_real[2][3] = y[22]; y_imag[2][3] = y[23];
+
+    y_real[3][0] = y[24]; y_imag[3][0] = y[25];
+    y_real[3][1] = y[26]; y_imag[3][1] = y[27];
+    y_real[3][2] = y[28]; y_imag[3][2] = y[29];
+    y_real[3][3] = y[30]; y_imag[3][3] = y[31];
+
+#define MACRO(i, j)                                                                 \
+    {                                                                               \
+        double real = 0.0, imag = 0.0;                                             \
+        real += 2.0 * x_real[i][0] * y_real[0][j] - x_imag[i][0] * y_imag[0][j];   \
+        imag += 2.0 * x_imag[i][0] * y_real[0][j] + 2.0 * x_real[i][0] * y_imag[0][j]; \
+        real += 2.0 * x_real[i][1] * y_real[1][j] - x_imag[i][1] * y_imag[1][j];   \
+        imag += 2.0 * x_imag[i][1] * y_real[1][j] + 2.0 * x_real[i][1] * y_imag[1][j]; \
+        real += 2.0 * x_real[i][2] * y_real[2][j] - x_imag[i][2] * y_imag[2][j];   \
+        imag += 2.0 * x_imag[i][2] * y_real[2][j] + 2.0 * x_real[i][2] * y_imag[2][j]; \
+        real += 2.0 * x_real[i][3] * y_real[3][j] - x_imag[i][3] * y_imag[3][j];   \
+        imag += 2.0 * x_imag[i][3] * y_real[3][j] + 2.0 * x_real[i][3] * y_imag[3][j]; \
+        z[(i * 4 + j) * 2] = real;                                                  \
+        z[(i * 4 + j) * 2 + 1] = imag;                                              \
+    }
+
+    MACRO(0, 0)
+    MACRO(0, 1)
+    MACRO(0, 2)
+    MACRO(0, 3)
+    MACRO(1, 0)
+    MACRO(1, 1)
+    MACRO(1, 2)
+    MACRO(1, 3)
+    MACRO(2, 0)
+    MACRO(2, 1)
+    MACRO(2, 2)
+    MACRO(2, 3)
+    MACRO(3, 0)
+    MACRO(3, 1)
+    MACRO(3, 2)
+    MACRO(3, 3)
+
+#undef MACRO
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9535.95 cycles
+
+Running: max_performance
+186.523 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    // Initialize z to zero using vector instructions
+    const __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 8; ++i) {
+        _mm256_storeu_pd(z + i * 4, zero);
+    }
+
+    // Loop over each i and j
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real_sum = 0.0;
+            double imag_sum = 0.0;
+
+            // Unroll k loop
+            for (int k = 0; k < 4; ++k) {
+                // Calculate indices
+                const int x_idx = (i * 4 + k) * 2;
+                const int y_idx = (k * 4 + j) * 2;
+
+                // Load a, b, c, d
+                const double a = x[x_idx];
+                const double b = x[x_idx + 1];
+                const double c = y[y_idx];
+                const double d = y[y_idx + 1];
+
+                // Compute using FMA
+                const double prod_real = __builtin_fma(2.0 * a, c, -b * d);
+                const double prod_imag = 2.0 * __builtin_fma(a, d, b * c);
+
+                // Accumulate results
+                real_sum += prod_real;
+                imag_sum += prod_imag;
+            }
+
+            // Store the results
+            const int idx = (i * 4 + j) * 2;
+            z[idx] = real_sum;
+            z[idx + 1] = imag_sum;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9636.05 cycles
+
+Running: max_performance
+198.375 cycles
+<<<
+WA
+================================

@@ -1,0 +1,197 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < 32; ++i) {
+        z[i] = 0.0;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double real = 0.0;
+            double imag = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                double a = x[(i * 4 + k) * 2];
+                double b = x[(i * 4 + k) * 2 + 1];
+
+                double c = y[(k * 4 + j) * 2];
+                double d = y[(k * 4 + j) * 2 + 1];
+
+                double prod_real = 2.0 * a * c - b * d;
+                double prod_imag = 2.0 * b * c + 2.0 * a * d;
+
+                real += prod_real;
+                imag += prod_imag;
+            }
+
+            z[(i * 4 + j) * 2] = real;
+            z[(i * 4 + j) * 2 + 1] = imag;
+        }
+    }
+}
+
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    // Initialize z to 0.0
+    __m256d zero = _mm256_setzero_pd();
+    for (int i = 0; i < 4; ++i) {
+        _mm256_storeu_pd(&z[i * 8], zero);
+    }
+
+    // Main computation with loop unrolling and AVX2 instructions
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_acc = _mm256_setzero_pd();
+            __m256d imag_acc = _mm256_setzero_pd();
+            for (int k = 0; k < 4; k += 4) {
+                __m256d a = _mm256_loadu_pd(&x[(i * 4 + k) * 2]);
+                __m256d b = _mm256_loadu_pd(&x[(i * 4 + k) * 2 + 1]);
+                __m256d c = _mm256_loadu_pd(&y[(k * 4 + j) * 2]);
+                __m256d d = _mm256_loadu_pd(&y[(k * 4 + j) * 2 + 1]);
+
+                // Complex multiply: (a+bi)(c+di) = (ac - bd)+(bc + ad)i
+                __m256d ac = _mm256_mul_pd(a, c);
+                __m256d bd = _mm256_mul_pd(b, d);
+                __m256d bc = _mm256_mul_pd(b, c);
+                __m256d ad = _mm256_mul_pd(a, d);
+
+                __m256d prod_real = _mm256_sub_pd(_mm256_mul_pd(_mm256_set1_pd(2.0), ac), bd);
+                __m256d prod_imag = _mm256_add_pd(_mm256_mul_pd(_mm256_set1_pd(2.0), bc), _mm256_mul_pd(_mm256_set1_pd(2.0), ad));
+
+                real_acc = _mm256_add_pd(real_acc, prod_real);
+                imag_acc = _mm256_add_pd(imag_acc, prod_imag);
+            }
+
+            _mm256_storeu_pd(&z[(i * 4 + j) * 2], real_acc);
+            _mm256_storeu_pd(&z[(i * 4 + j) * 2 + 1], imag_acc);
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9494.42 cycles
+
+Running: max_performance
+160.342 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m256d real_acc = zero;
+            __m256d imag_acc = zero;
+            for (int k = 0; k < 4; ++k) {
+                __m256d a_b = _mm256_load_pd(x+(i * 4 + k) * 2);
+                __m256d c_d = _mm256_load_pd(y+(k * 4 + j) * 2);
+                
+                __m256d a = _mm256_unpacklo_pd(a_b, a_b);
+                __m256d b = _mm256_unpackhi_pd(a_b, a_b);
+                __m256d c = _mm256_unpacklo_pd(c_d, c_d);
+                __m256d d = _mm256_unpackhi_pd(c_d, c_d);
+                
+                __m256d prod_real = _mm256_fmadd_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(a, c), _mm256_mul_pd(b, _mm256_set1_pd(-1.0)));
+                __m256d prod_imag = _mm256_fmadd_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(b, c), _mm256_fmadd_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(a, d), _mm256_setzero_pd()));
+                
+                real_acc = _mm256_add_pd(real_acc, prod_real);
+                imag_acc = _mm256_add_pd(imag_acc, prod_imag);
+            }
+            int index = (i * 4 + j) * 2;
+            _mm256_store_pd(z+index, real_acc);
+            _mm256_store_pd(z+index+2, imag_acc);
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m128d zero = _mm_setzero_pd();
+    for (int i = 0; i < 16; ++i) {
+        _mm_storeu_pd(&z[i * 2], zero);
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            __m128d real = _mm_setzero_pd();
+            __m128d imag = _mm_setzero_pd();
+            for (int k = 0; k < 4; k += 2) {
+                __m128d a_b = _mm_loadu_pd(&x[(i * 4 + k) * 2]);
+                __m128d c_d = _mm_loadu_pd(&y[(k * 4 + j) * 2]);
+
+                __m128d a = _mm_unpacklo_pd(a_b, a_b);
+                __m128d b = _mm_unpackhi_pd(a_b, a_b);
+                __m128d c = _mm_unpacklo_pd(c_d, c_d);
+                __m128d d = _mm_unpackhi_pd(c_d, c_d);
+
+                __m128d prod_real_1 = _mm_mul_pd(a, c);
+                __m128d prod_real_2 = _mm_mul_pd(b, d);
+                __m128d prod_imag_1 = _mm_mul_pd(b, c);
+                __m128d prod_imag_2 = _mm_mul_pd(a, d);
+
+                __m128d prod_real = _mm_sub_pd(_mm_add_pd(prod_real_1, prod_real_1), prod_real_2);
+                __m128d prod_imag = _mm_add_pd(_mm_add_pd(prod_imag_1, prod_imag_1), prod_imag_2);
+
+                real = _mm_add_pd(real, prod_real);
+                imag = _mm_add_pd(imag, prod_imag);
+            }
+
+            _mm_storeu_pd(&z[(i * 4 + j) * 2], real);
+            _mm_storeu_pd(&z[(i * 4 + j) * 2 + 2], imag);
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9557.36 cycles
+
+Running: max_performance
+159.5 cycles
+<<<
+WA
+================================

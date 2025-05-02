@@ -1,0 +1,337 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// Precondition: 0 <= z[i] < 1.0
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  double t[2];
+  for (int i = 0; i < N; i++)
+  {
+    if (sqrt(x[i * 2] * x[i * 2] + x[i * 2 + 1] * x[i * 2 + 1]) > sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]))
+    {
+      unsigned int k = floor(4.0 * z[i]);
+      switch (k)
+      {
+      case 0:
+        t[0] = x[i * 2] + y[i * 2] * 5.1;
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * 5.1;
+        break;
+      case 1:
+        t[0] = (x[i * 2]) * (y[i * 2] * 2.1) - (x[i * 2 + 1]) * (y[i * 2 + 1] * 2.1);
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * 2.1) + (x[i * 2 + 1]) * (y[i * 2] * 2.1);
+        break;
+      case 2:
+        t[0] = x[i * 2] + y[i * 2] * (-3.5);
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * (-3.5);
+        break;
+      case 3:
+        t[0] = (x[i * 2]) * (y[i * 2] * (-4.1)) - (x[i * 2 + 1]) * (y[i * 2 + 1] * (-4.1));
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * (-4.1)) + (x[i * 2 + 1]) * (y[i * 2] * (-4.1));
+        break;
+      default:
+        break;
+      }
+      z[i] += t[0] + ((t[0]) * (t[0]) - (t[1]) * (t[1]));
+    }
+    else
+    {
+      z[i] += round(((x[i * 2]) * (x[i * 2]) - (x[i * 2 + 1]) * (x[i * 2 + 1]))) + pow(sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]), 2.0);
+    }
+  }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+```cpp
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    double *__restrict px = x;
+    double *__restrict py = y;
+
+    const double c5_1  = 5.1;
+    const double c2_1  = 2.1;
+    const double c_3_5 = -3.5;
+    const double c_4_1 = -4.1;
+
+    for (int i = 0; i < N; ++i)
+    {
+        double ax = px[0], ay = px[1];
+        double bx = py[0], by = py[1];
+
+        double ax2 = ax * ax, ay2 = ay * ay;
+        double bx2 = bx * bx, by2 = by * by;
+
+        if ((ax2 + ay2) > (bx2 + by2))
+        {
+            unsigned int k = static_cast<unsigned int>(z[i] * 4.0);
+            double t0, t1;
+
+            switch (k)
+            {
+            case 0:
+                t0 = ax + bx * c5_1;
+                t1 = ay + by * c5_1;
+                break;
+            case 1: {
+                double bx21 = bx * c2_1;
+                double by21 = by * c2_1;
+                t0 = ax * bx21 - ay * by21;
+                t1 = ax * by21 + ay * bx21;
+                break;
+            }
+            case 2:
+                t0 = ax + bx * c_3_5;
+                t1 = ay + by * c_3_5;
+                break;
+            default: {
+                double bx41 = bx * c_4_1;
+                double by41 = by * c_4_1;
+                t0 = ax * bx41 - ay * by41;
+                t1 = ax * by41 + ay * bx41;
+                break;
+            }
+            }
+
+            double temp = t0 * t0 - t1 * t1;
+            z[i] += t0 + temp;
+        }
+        else
+        {
+            double diff = ax2 - ay2;
+            long long r = static_cast<long long>(diff + (diff >= 0.0 ? 0.5 : -0.5));
+            z[i] += static_cast<double>(r) + (bx2 + by2);
+        }
+
+        px += 2;
+        py += 2;
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9532.85 cycles
+
+Running: maxperformance
+4733.46 cycles
+<<<
+9532.85 / 4733.46 = 2.013928500504916
+================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    static const double add_c[4] = { 5.1, 0.0, -3.5, 0.0 };
+    static const double mul_c[4] = { 0.0, 2.1,  0.0, -4.1 };
+
+    double *xp = x;
+    double *yp = y;
+    double *zp = z;
+
+    int i = 0;
+    const int N4 = N & ~3;              // process in blocks of 4
+
+    for (; i < N4; i += 4)
+    {
+#pragma GCC unroll 4
+        for (int s = 0; s < 4; ++s)
+        {
+            const double x0 = xp[2 * s];
+            const double x1 = xp[2 * s + 1];
+            const double y0 = yp[2 * s];
+            const double y1 = yp[2 * s + 1];
+
+            const double xsq = x0 * x0 + x1 * x1;
+            const double ysq = y0 * y0 + y1 * y1;
+
+            if (xsq > ysq)
+            {
+                const unsigned int k = static_cast<unsigned int>(4.0 * zp[s]);
+                const double a = add_c[k];
+                const double m = mul_c[k];
+
+                double t0 = x0 + a * y0;
+                double t1 = x1 + a * y1;
+
+                if (m != 0.0)
+                {
+                    const double xy      = x0 * y0 - x1 * y1;
+                    const double xy_cross = x0 * y1 + x1 * y0;
+                    t0 += m * xy;
+                    t1 += m * xy_cross;
+                }
+
+                zp[s] += t0 + (t0 * t0 - t1 * t1);
+            }
+            else
+            {
+                const double diff = x0 * x0 - x1 * x1;
+                const double rounded = static_cast<double>(
+                    static_cast<long long>(diff >= 0.0 ? diff + 0.5 : diff - 0.5));
+                zp[s] += rounded + ysq;
+            }
+        }
+
+        xp += 8;   // 4 vectors * 2 components
+        yp += 8;
+        zp += 4;
+    }
+
+    for (; i < N; ++i)
+    {
+        const double x0 = xp[0];
+        const double x1 = xp[1];
+        const double y0 = yp[0];
+        const double y1 = yp[1];
+
+        const double xsq = x0 * x0 + x1 * x1;
+        const double ysq = y0 * y0 + y1 * y1;
+
+        if (xsq > ysq)
+        {
+            const unsigned int k = static_cast<unsigned int>(4.0 * zp[0]);
+            const double a = add_c[k];
+            const double m = mul_c[k];
+
+            double t0 = x0 + a * y0;
+            double t1 = x1 + a * y1;
+
+            if (m != 0.0)
+            {
+                const double xy      = x0 * y0 - x1 * y1;
+                const double xy_cross = x0 * y1 + x1 * y0;
+                t0 += m * xy;
+                t1 += m * xy_cross;
+            }
+
+            zp[0] += t0 + (t0 * t0 - t1 * t1);
+        }
+        else
+        {
+            const double diff = x0 * x0 - x1 * x1;
+            const double rounded = static_cast<double>(
+                static_cast<long long>(diff >= 0.0 ? diff + 0.5 : diff - 0.5));
+            zp[0] += rounded + ysq;
+        }
+
+        xp += 2;
+        yp += 2;
+        zp += 1;
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+9364.83 cycles
+
+Running: maxperformance
+5177.9 cycles
+<<<
+WA
+================================
+```cpp
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const double c5_1  = 5.1;
+    const double c2_1  = 2.1;
+    const double cN3_5 = -3.5;
+    const double cN4_1 = -4.1;
+
+    for (int i = 0; i < N; ++i)
+    {
+        const int idx = i << 1;
+        const double x0 = x[idx];
+        const double x1 = x[idx + 1];
+        const double y0 = y[idx];
+        const double y1 = y[idx + 1];
+
+        const double xsq = x0 * x0 + x1 * x1;
+        const double ysq = y0 * y0 + y1 * y1;
+
+        if (xsq > ysq)
+        {
+            unsigned int k = static_cast<unsigned int>(z[i] * 4.0);
+            double t0, t1;
+
+            switch (k)
+            {
+            case 0:
+                t0 = x0 + y0 * c5_1;
+                t1 = x1 + y1 * c5_1;
+                break;
+
+            case 1:
+            {
+                const double a = y0 * c2_1;
+                const double b = y1 * c2_1;
+                t0 = x0 * a - x1 * b;
+                t1 = x0 * b + x1 * a;
+            }
+                break;
+
+            case 2:
+                t0 = x0 + y0 * cN3_5;
+                t1 = x1 + y1 * cN3_5;
+                break;
+
+            case 3:
+            {
+                const double a = y0 * cN4_1;
+                const double b = y1 * cN4_1;
+                t0 = x0 * a - x1 * b;
+                t1 = x0 * b + x1 * a;
+            }
+                break;
+
+            default:
+                t0 = t1 = 0.0;
+            }
+
+            z[i] += t0 + (t0 * t0 - t1 * t1);
+        }
+        else
+        {
+            const double val     = x0 * x0 - x1 * x1;
+            const double rounded = (val >= 0.0) ? floor(val + 0.5) : -floor(-val + 0.5);
+            z[i] += rounded + ysq;
+        }
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9298.88 cycles
+
+Running: maxperformance
+4505.77 cycles
+<<<
+9298.88 / 4505.77 = 2.063771564016805
+================================

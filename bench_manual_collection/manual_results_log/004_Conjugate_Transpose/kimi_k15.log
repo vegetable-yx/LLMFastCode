@@ -1,0 +1,170 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+void slow_performance1(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y) {
+    __m128d sign_mask = _mm_set_pd(-1.0, 1.0); // [1.0, -1.0] in reverse order
+
+    for (int j = 0; j < 4; ++j) {
+        __m256d x_row0 = _mm256_loadu_pd(&x[j * 8]);
+        __m256d x_row1 = _mm256_loadu_pd(&x[j * 8 + 4]);
+
+        // Process i=0
+        __m128d pair0 = _mm256_extractf128_pd(x_row0, 0);
+        pair0 = _mm_mul_pd(pair0, sign_mask);
+        _mm_storeu_pd(&y[j * 2], pair0);
+
+        // Process i=1
+        __m128d pair1 = _mm256_extractf128_pd(x_row0, 1);
+        pair1 = _mm_mul_pd(pair1, sign_mask);
+        _mm_storeu_pd(&y[8 + j * 2], pair1);
+
+        // Process i=2
+        __m128d pair2 = _mm256_extractf128_pd(x_row1, 0);
+        pair2 = _mm_mul_pd(pair2, sign_mask);
+        _mm_storeu_pd(&y[16 + j * 2], pair2);
+
+        // Process i=3
+        __m128d pair3 = _mm256_extractf128_pd(x_row1, 1);
+        pair3 = _mm_mul_pd(pair3, sign_mask);
+        _mm_storeu_pd(&y[24 + j * 2], pair3);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.4909 cycles
+
+Running: maxperformance
+12.2562 cycles
+<<<
+26.4909 / 12.2562 = 2.161428501493122
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d sign = _mm256_set_pd(-1.0, 1.0, -1.0, 1.0);
+    for (int j = 0; j < 4; ++j) {
+        __m256d data = _mm256_loadu_pd(&x[j * 8]);
+        __m256d even = _mm256_shuffle_pd(data, data, 0x00);
+        __m256d odd = _mm256_shuffle_pd(data, data, 0x00);
+        odd = _mm256_mul_pd(odd, sign);
+        for (int i = 0; i < 4; ++i) {
+            y[j * 2 + i * 8] = even[i];
+            y[j * 2 + i * 8 + 1] = odd[i];
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.5257 cycles
+
+Running: maxperformance
+15.2544 cycles
+<<<
+WA
+================================
+void maxperformance(double *__restrict x, double *__restrict y) {
+    __m256d block0_row0 = _mm256_loadu_pd(&x[0]);
+    __m256d block0_row1 = _mm256_loadu_pd(&x[8]);
+    __m256d block0_row2 = _mm256_loadu_pd(&x[16]);
+    __m256d block0_row3 = _mm256_loadu_pd(&x[24]);
+
+    __m256d t00 = _mm256_unpacklo_pd(block0_row0, block0_row1);
+    __m256d t01 = _mm256_unpackhi_pd(block0_row0, block0_row1);
+    __m256d t02 = _mm256_unpacklo_pd(block0_row2, block0_row3);
+    __m256d t03 = _mm256_unpackhi_pd(block0_row2, block0_row3);
+    __m256d t04 = _mm256_permute2f128_pd(t00, t02, 0x20);
+    __m256d t05 = _mm256_permute2f128_pd(t01, t03, 0x20);
+
+    __m128d row0_lo = _mm256_extractf128_pd(t04, 0);
+    __m128d row0_hi = _mm256_extractf128_pd(t04, 1);
+    __m128d row1_lo = _mm256_extractf128_pd(t05, 0);
+    __m128d row1_hi = _mm256_extractf128_pd(t05, 1);
+
+    __m256d block1_row0 = _mm256_loadu_pd(&x[4]);
+    __m256d block1_row1 = _mm256_loadu_pd(&x[12]);
+    __m256d block1_row2 = _mm256_loadu_pd(&x[20]);
+    __m256d block1_row3 = _mm256_loadu_pd(&x[28]);
+
+    __m256d t10 = _mm256_unpacklo_pd(block1_row0, block1_row1);
+    __m256d t11 = _mm256_unpackhi_pd(block1_row0, block1_row1);
+    __m256d t12 = _mm256_unpacklo_pd(block1_row2, block1_row3);
+    __m256d t13 = _mm256_unpackhi_pd(block1_row2, block1_row3);
+    __m256d t14 = _mm256_permute2f128_pd(t10, t12, 0x20);
+    __m256d t15 = _mm256_permute2f128_pd(t11, t13, 0x20);
+
+    __m128d row2_lo = _mm256_extractf128_pd(t14, 0);
+    __m128d row2_hi = _mm256_extractf128_pd(t14, 1);
+    __m128d row3_lo = _mm256_extractf128_pd(t15, 0);
+    __m128d row3_hi = _mm256_extractf128_pd(t15, 1);
+
+    __m256d mask_even = _mm256_set1_pd(1.0);
+    __m256d mask_odd = _mm256_set1_pd(-1.0);
+
+    __m256d row0_neg = _mm256_mul_pd(_mm256_set_m128d(row0_lo, row0_lo), mask_even);
+    __m256d row1_neg = _mm256_mul_pd(_mm256_set_m128d(row0_hi, row0_hi), mask_odd);
+    __m256d row2_neg = _mm256_mul_pd(_mm256_set_m128d(row1_lo, row1_lo), mask_even);
+    __m256d row3_neg = _mm256_mul_pd(_mm256_set_m128d(row1_hi, row1_hi), mask_odd);
+    __m256d row4_neg = _mm256_mul_pd(_mm256_set_m128d(row2_lo, row2_lo), mask_even);
+    __m256d row5_neg = _mm256_mul_pd(_mm256_set_m128d(row2_hi, row2_hi), mask_odd);
+    __m256d row6_neg = _mm256_mul_pd(_mm256_set_m128d(row3_lo, row3_lo), mask_even);
+    __m256d row7_neg = _mm256_mul_pd(_mm256_set_m128d(row3_hi, row3_hi), mask_odd);
+
+    for (int i = 0; i < 4; i++) {
+        __m256d even_row, odd_row;
+        if (i == 0) { even_row = row0_neg; odd_row = row1_neg; }
+        else if (i == 1) { even_row = row2_neg; odd_row = row3_neg; }
+        else if (i == 2) { even_row = row4_neg; odd_row = row5_neg; }
+        else { even_row = row6_neg; odd_row = row7_neg; }
+
+        __m256d low = _mm256_unpacklo_pd(even_row, odd_row);
+        __m256d high = _mm256_unpackhi_pd(even_row, odd_row);
+        __m256d interleaved = _mm256_insertf128_pd(low, high, 1);
+        _mm256_storeu_pd(&y[i * 8], interleaved);
+    }
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

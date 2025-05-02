@@ -1,0 +1,228 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
+
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+    const int vector_size = 2;
+    const int num_vectors = n / vector_size;
+
+    for (int i = 0; i < num_vectors * vector_size; i += vector_size)
+    {
+        __m128d y_vec = _mm_loadu_pd(&y[i]);
+        __m128d four = _mm_set1_pd(4.0);
+        __m128d k_pd = _mm_mul_pd(y_vec, four);
+        __m128i k_int = _mm_cvttpd_epi32(k_pd);
+
+        __m128d real0 = _mm_load_sd(&x[2*i]);
+        __m128d real1 = _mm_load_sd(&x[2*i + 2]);
+        __m128d real = _mm_unpacklo_pd(real0, real1);
+
+        __m128d imag0 = _mm_load_sd(&x[2*i + 1]);
+        __m128d imag1 = _mm_load_sd(&x[2*i + 3]);
+        __m128d imag = _mm_unpacklo_pd(imag0, imag1);
+
+        __m128d real_sq = _mm_mul_pd(real, real);
+        __m128d imag_sq = _mm_mul_pd(imag, imag);
+        __m128d real_sqr = _mm_sub_pd(real_sq, imag_sq);
+        __m128d two = _mm_set1_pd(2.0);
+        __m128d imag_sqr = _mm_mul_pd(_mm_mul_pd(real, imag), two);
+        __m128d sum_val = _mm_add_pd(real_sq, imag_sq);
+
+        __m128d min_val = _mm_min_pd(real_sqr, imag_sqr);
+        __m128d max_val = _mm_max_pd(real_sqr, imag_sqr);
+
+        __m128i zero = _mm_setzero_si128();
+        __m128i one = _mm_set1_epi32(1);
+        __m128i mask0 = _mm_cmpeq_epi32(k_int, zero);
+        __m128i mask1 = _mm_cmpeq_epi32(k_int, one);
+        __m128i mask2 = _mm_andnot_si128(_mm_or_si128(mask0, mask1), _mm_set1_epi32(-1));
+
+        __m128d temp = _mm_blendv_pd(max_val, min_val, _mm_castsi128_pd(mask0));
+        __m128d addend = _mm_blendv_pd(temp, sum_val, _mm_castsi128_pd(mask2));
+
+        y_vec = _mm_add_pd(y_vec, addend);
+        _mm_storeu_pd(&y[i], y_vec);
+    }
+
+    for (int i = num_vectors * vector_size; i < n; ++i)
+    {
+        double real = x[2*i];
+        double imag = x[2*i + 1];
+        unsigned int k = static_cast<unsigned int>(4.0 * y[i]);
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k)
+        {
+        case 0:
+            y[i] += (real_sqr < imag_sqr) ? real_sqr : imag_sqr;
+            break;
+        case 1:
+            y[i] += (real_sqr > imag_sqr) ? real_sqr : imag_sqr;
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+6891.85 cycles
+
+Running: maxperformance
+2419.97 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, int n) {
+    const int step = 4;
+    const __m256d four = _mm256_set1_pd(4.0);
+    const __m256d two = _mm256_set1_pd(2.0);
+    const __m256d one_d = _mm256_set1_pd(1.0);
+    const __m256i zero_i = _mm256_setzero_si256();
+    const __m256i one_i = _mm256_set1_epi32(1);
+
+    for (int i = 0; i < n; i += step) {
+        __m256d vec_y = _mm256_loadu_pd(&y[i]);
+        __m256d vec_4y = _mm256_mul_pd(vec_y, four);
+        __m256i vec_k = _mm256_cvttpd_epi32(vec_4y);
+
+        __m256i k_eq_0 = _mm256_cmpeq_epi32(vec_k, zero_i);
+        __m256i k_eq_1 = _mm256_cmpeq_epi32(vec_k, one_i);
+        __m256i k_ge_2 = _mm256_cmpgt_epi32(vec_k, one_i);
+
+        __m256d mask_0 = _mm256_blendv_pd(_mm256_setzero_pd(), one_d, _mm256_castsi256_pd(k_eq_0));
+        __m256d mask_1 = _mm256_blendv_pd(_mm256_setzero_pd(), one_d, _mm256_castsi256_pd(k_eq_1));
+        __m256d mask_other = _mm256_blendv_pd(_mm256_setzero_pd(), one_d, _mm256_castsi256_pd(k_ge_2));
+
+        __m256d vec_x0 = _mm256_loadu_pd(&x[2*i]);
+        __m256d vec_x1 = _mm256_loadu_pd(&x[2*i +4]);
+        __m256d vec_real = _mm256_shuffle_pd(vec_x0, vec_x1, 0x44);
+        __m256d vec_imag = _mm256_shuffle_pd(vec_x0, vec_x1, 0xDD);
+
+        __m256d real_sq = _mm256_mul_pd(vec_real, vec_real);
+        __m256d imag_sq = _mm256_mul_pd(vec_imag, vec_imag);
+        __m256d real_sqr = _mm256_sub_pd(real_sq, imag_sq);
+        __m256d sum_sq = _mm256_add_pd(real_sq, imag_sq);
+        __m256d imag_sqr = _mm256_mul_pd(_mm256_mul_pd(vec_real, vec_imag), two);
+
+        __m256d min_val = _mm256_min_pd(real_sqr, imag_sqr);
+        __m256d max_val = _mm256_max_pd(real_sqr, imag_sqr);
+
+        __m256d delta = _mm256_fmadd_pd(min_val, mask_0, _mm256_fmadd_pd(max_val, mask_1, _mm256_mul_pd(sum_sq, mask_other)));
+        vec_y = _mm256_add_pd(vec_y, delta);
+        _mm256_storeu_pd(&y[i], vec_y);
+    }
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+    const __m256d four = _mm256_set1_pd(4.0);
+    const __m256d two = _mm256_set1_pd(2.0);
+
+    for (int i_base = 0; i_base < n; i_base += 4) {
+        __m256d x_vec = _mm256_load_pd(&x[2*i_base]);
+        __m128d low = _mm256_extractf128_pd(x_vec, 0);
+        __m128d high = _mm256_extractf128_pd(x_vec, 1);
+        __m128d even_low = _mm_shuffle_pd(low, low, _MM_SHUFFLE(2, 0, 2, 0));
+        __m128d even_high = _mm_shuffle_pd(high, high, _MM_SHUFFLE(2, 0, 2, 0));
+        __m256d real = _mm256_insertf128_pd(_mm256_undefined(), even_low, 0);
+        real = _mm256_insertf128_pd(real, even_high, 1);
+        __m128d odd_low = _mm_shuffle_pd(low, low, _MM_SHUFFLE(3, 1, 3, 1));
+        __m128d odd_high = _mm_shuffle_pd(high, high, _MM_SHUFFLE(3, 1, 3, 1));
+        __m256d imag = _mm256_insertf128_pd(_mm256_undefined(), odd_low, 0);
+        imag = _mm256_insertf128_pd(imag, odd_high, 1);
+        __m256d real_sqr = _mm256_sub_pd(_mm256_mul_pd(real, real), _mm256_mul_pd(imag, imag));
+        __m256d imag_sqr = _mm256_mul_pd(_mm256_add_pd(real, real), imag);
+        __m256d y_chunk = _mm256_load_pd(&y[i_base]);
+        __m256d four_y = _mm256_mul_pd(y_chunk, four);
+        __m256i k_int = _mm256_cvttpd_epi64(four_y);
+        __m256d min_val = _mm256_min_pd(real_sqr, imag_sqr);
+        __m256d max_val = _mm256_max_pd(real_sqr, imag_sqr);
+        __m256d sum_val = _mm256_add_pd(real_sqr, imag_sqr);
+        __m256i mask_zero = _mm256_cmpeq_epi64(k_int, _mm256_setzero_si256());
+        __m256i mask_one = _mm256_cmpeq_epi64(k_int, _mm256_set1_epi64(1));
+        __m256d temp = _mm256_blendv_pd(min_val, max_val, _mm256_castsi256_pd(mask_one));
+        __m256i mask = _mm256_or_si256(mask_zero, mask_one);
+        __m256d delta = _mm256_blendv_pd(sum_val, temp, _mm256_castsi256_pd(mask));
+        __m256d new_y = _mm256_add_pd(y_chunk, delta);
+        _mm256_store_pd(&y[i_base], new_y);
+    }
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

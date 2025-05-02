@@ -1,0 +1,150 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+void slow_performance1(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+```cpp
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    const __m256d signMask = _mm256_set1_pd(-0.0);
+
+    __m256d re0 = _mm256_set_pd(x[24], x[16], x[8], x[0]);
+    __m256d im0 = _mm256_xor_pd(_mm256_set_pd(x[25], x[17], x[9], x[1]), signMask);
+    _mm256_storeu_pd(y + 0,  _mm256_unpacklo_pd(re0, im0));
+    _mm256_storeu_pd(y + 4,  _mm256_unpackhi_pd(re0, im0));
+
+    __m256d re1 = _mm256_set_pd(x[26], x[18], x[10], x[2]);
+    __m256d im1 = _mm256_xor_pd(_mm256_set_pd(x[27], x[19], x[11], x[3]), signMask);
+    _mm256_storeu_pd(y + 8,  _mm256_unpacklo_pd(re1, im1));
+    _mm256_storeu_pd(y + 12, _mm256_unpackhi_pd(re1, im1));
+
+    __m256d re2 = _mm256_set_pd(x[28], x[20], x[12], x[4]);
+    __m256d im2 = _mm256_xor_pd(_mm256_set_pd(x[29], x[21], x[13], x[5]), signMask);
+    _mm256_storeu_pd(y + 16, _mm256_unpacklo_pd(re2, im2));
+    _mm256_storeu_pd(y + 20, _mm256_unpackhi_pd(re2, im2));
+
+    __m256d re3 = _mm256_set_pd(x[30], x[22], x[14], x[6]);
+    __m256d im3 = _mm256_xor_pd(_mm256_set_pd(x[31], x[23], x[15], x[7]), signMask);
+    _mm256_storeu_pd(y + 24, _mm256_unpacklo_pd(re3, im3));
+    _mm256_storeu_pd(y + 28, _mm256_unpackhi_pd(re3, im3));
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.565 cycles
+
+Running: maxperformance
+11.8418 cycles
+<<<
+26.565 / 11.8418 = 2.2433244945869717
+================================
+```cpp
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m128d conj_mask = _mm_set_pd(-0.0, 0.0);
+
+    for (int j = 0; j < 4; ++j)
+    {
+        double *xrow = x + j * 8;
+
+        __m128d v0 = _mm_xor_pd(_mm_loadu_pd(xrow),       conj_mask);
+        __m128d v1 = _mm_xor_pd(_mm_loadu_pd(xrow + 2),   conj_mask);
+        __m128d v2 = _mm_xor_pd(_mm_loadu_pd(xrow + 4),   conj_mask);
+        __m128d v3 = _mm_xor_pd(_mm_loadu_pd(xrow + 6),   conj_mask);
+
+        _mm_storeu_pd(y + 0 * 8 + j * 2, v0);
+        _mm_storeu_pd(y + 1 * 8 + j * 2, v1);
+        _mm_storeu_pd(y + 2 * 8 + j * 2, v2);
+        _mm_storeu_pd(y + 3 * 8 + j * 2, v3);
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.0417 cycles
+
+Running: maxperformance
+11.6055 cycles
+<<<
+26.0417 / 11.6055 = 2.243910214984275
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m128d conj_mask = _mm_set_pd(-0.0, 0.0);
+
+#pragma GCC unroll 4
+    for (int j = 0; j < 4; ++j)
+    {
+        double *src = x + j * 8;
+
+        __m128d v0 = _mm_xor_pd(_mm_loadu_pd(src),       conj_mask);
+        __m128d v1 = _mm_xor_pd(_mm_loadu_pd(src + 2),   conj_mask);
+        __m128d v2 = _mm_xor_pd(_mm_loadu_pd(src + 4),   conj_mask);
+        __m128d v3 = _mm_xor_pd(_mm_loadu_pd(src + 6),   conj_mask);
+
+        double *d0 = y + j * 2;
+        double *d1 = y + 8  + j * 2;
+        double *d2 = y + 16 + j * 2;
+        double *d3 = y + 24 + j * 2;
+
+        _mm_storeu_pd(d0, v0);
+        _mm_storeu_pd(d1, v1);
+        _mm_storeu_pd(d2, v2);
+        _mm_storeu_pd(d3, v3);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.6045 cycles
+
+Running: maxperformance
+11.8089 cycles
+<<<
+26.6045 / 11.8089 = 2.252919408242936
+================================

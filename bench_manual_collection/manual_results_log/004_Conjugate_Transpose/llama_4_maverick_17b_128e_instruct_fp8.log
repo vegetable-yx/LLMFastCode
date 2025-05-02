@@ -1,0 +1,150 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+void slow_performance1(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    __m256d v0, v1, v2, v3;
+    for (int i = 0; i < 4; i++)
+    {
+        v0 = _mm256_loadu_pd(x + i * 2);
+        v1 = _mm256_loadu_pd(x + 8 + i * 2);
+        v2 = _mm256_loadu_pd(x + 16 + i * 2);
+        v3 = _mm256_loadu_pd(x + 24 + i * 2);
+
+        __m256d tmp0 = _mm256_unpacklo_pd(v0, v1);
+        __m256d tmp1 = _mm256_unpacklo_pd(v2, v3);
+        __m256d tmp2 = _mm256_unpackhi_pd(v0, v1);
+        __m256d tmp3 = _mm256_unpackhi_pd(v2, v3);
+
+        v0 = _mm256_permute2f128_pd(tmp0, tmp1, 0x20);
+        v1 = _mm256_permute2f128_pd(tmp2, tmp3, 0x20);
+        v2 = _mm256_permute2f128_pd(tmp0, tmp1, 0x31);
+        v3 = _mm256_permute2f128_pd(tmp2, tmp3, 0x31);
+
+        v0 = _mm256_xor_pd(v0, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+        v1 = _mm256_xor_pd(v1, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+        v2 = _mm256_xor_pd(v2, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+        v3 = _mm256_xor_pd(v3, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+
+        _mm256_storeu_pd(y + i * 8, v0);
+        _mm256_storeu_pd(y + i * 8 + 4, v1);
+        _mm256_storeu_pd(y + i * 8 + 16, v2);
+        _mm256_storeu_pd(y + i * 8 + 20, v3);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.557 cycles
+Segmentation fault
+<<<
+WA
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    __m256d v0, v1, v2, v3;
+    for (int i = 0; i < 4; i++)
+    {
+        v0 = _mm256_loadu_pd(x + i * 2);
+        v1 = _mm256_loadu_pd(x + 8 + i * 2);
+        v2 = _mm256_loadu_pd(x + 16 + i * 2);
+        v3 = _mm256_loadu_pd(x + 24 + i * 2);
+
+        __m256d tmp0 = _mm256_unpacklo_pd(v0, v1);
+        __m256d tmp1 = _mm256_unpacklo_pd(v2, v3);
+        __m256d tmp2 = _mm256_unpackhi_pd(v0, v1);
+        __m256d tmp3 = _mm256_unpackhi_pd(v2, v3);
+
+        v0 = _mm256_permute2f128_pd(tmp0, tmp1, 0x20);
+        v1 = _mm256_permute2f128_pd(tmp2, tmp3, 0x20);
+        v2 = _mm256_permute2f128_pd(tmp0, tmp1, 0x31);
+        v3 = _mm256_permute2f128_pd(tmp2, tmp3, 0x31);
+
+        v0 = _mm256_blend_pd(v0, _mm256_xor_pd(v1, _mm256_set1_pd(-0.0)), 0xAA);
+        v2 = _mm256_blend_pd(v2, _mm256_xor_pd(v3, _mm256_set1_pd(-0.0)), 0xAA);
+
+        _mm256_storeu_pd(y + i * 8, v0);
+        _mm256_storeu_pd(y + i * 8 + 4, v2);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    __m256d vec0, vec1;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j += 2)
+        {
+            vec0 = _mm256_loadu_pd(x + j * 8 + i * 2);
+            vec1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 8);
+            _mm256_storeu_pd(y + i * 8 + j * 2, _mm256_permute4x64_pd(vec0, 0xD8));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 4, _mm256_permute4x64_pd(vec1, 0xD8));
+            vec0 = _mm256_loadu_pd(x + j * 8 + i * 2 + 1);
+            vec1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 9);
+            vec0 = _mm256_xor_pd(vec0, _mm256_set1_pd(-0.0));
+            vec1 = _mm256_xor_pd(vec1, _mm256_set1_pd(-0.0));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 1, _mm256_permute4x64_pd(vec0, 0xD8));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 5, _mm256_permute4x64_pd(vec1, 0xD8));
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.5787 cycles
+munmap_chunk(): invalid pointer
+Aborted
+<<<
+WA
+================================

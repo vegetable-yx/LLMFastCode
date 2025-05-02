@@ -1,0 +1,163 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
+
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i += 4)
+    {
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d x_real_vec = _mm256_loadu_pd(&x[2 * i]);
+        __m256d x_imag_vec = _mm256_loadu_pd(&x[2 * i + 1]);
+
+        __m256d k_vec = _mm256_floor_pd(_mm256_mul_pd(_mm256_set1_pd(4.0), y_vec));
+        __m256i k_int_vec = _mm256_cvtpd_epi32(_mm256_round_pd(k_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC));
+
+        __m256d real_sqr_vec = _mm256_sub_pd(_mm256_mul_pd(x_real_vec, x_real_vec), _mm256_mul_pd(x_imag_vec, x_imag_vec));
+        __m256d imag_sqr_vec = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_real_vec, x_imag_vec));
+
+        __m256d sum_sqr_vec = _mm256_add_pd(_mm256_mul_pd(x_real_vec, x_real_vec), _mm256_mul_pd(x_imag_vec, x_imag_vec));
+
+        __m256d min_max_vec = _mm256_blendv_pd(imag_sqr_vec, real_sqr_vec, _mm256_cmp_pd(k_vec, _mm256_set1_pd(0.5), _CMP_LT_OQ));
+        min_max_vec = _mm256_blendv_pd(sum_sqr_vec, min_max_vec, _mm256_or_pd(_mm256_cmp_pd(k_vec, _mm256_set1_pd(0.5), _CMP_LT_OQ), _mm256_cmp_pd(k_vec, _mm256_set1_pd(1.5), _CMP_GT_OQ)));
+
+        __m256d update_vec = _mm256_add_pd(y_vec, min_max_vec);
+        _mm256_storeu_pd(&y[i], update_vec);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i += 4)
+    {
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d x_real_vec = _mm256_loadu_pd(&x[2 * i]);
+        __m256d x_imag_vec = _mm256_loadu_pd(&x[2 * i + 1]);
+
+        __m256d k_vec = _mm256_floor_pd(_mm256_mul_pd(_mm256_set1_pd(4.0), y_vec));
+        __m256i k_int_vec = _mm256_cvtpd_epi32(_mm256_round_pd(k_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC));
+
+        __m256d real_sqr_vec = _mm256_sub_pd(_mm256_mul_pd(x_real_vec, x_real_vec), _mm256_mul_pd(x_imag_vec, x_imag_vec));
+        __m256d imag_sqr_vec = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_real_vec, x_imag_vec));
+
+        __m256d sum_sqr_vec = _mm256_add_pd(_mm256_mul_pd(x_real_vec, x_real_vec), _mm256_mul_pd(x_imag_vec, x_imag_vec));
+
+        __m256d min_vec = _mm256_min_pd(real_sqr_vec, imag_sqr_vec);
+        __m256d max_vec = _mm256_max_pd(real_sqr_vec, imag_sqr_vec);
+
+        __m256d mask0 = _mm256_castsi256_pd(_mm256_cmpeq_epi32(k_int_vec, _mm256_set1_epi32(0)));
+        __m256d mask1 = _mm256_castsi256_pd(_mm256_cmpeq_epi32(k_int_vec, _mm256_set1_epi32(1)));
+        __m256d mask_default = _mm256_castsi256_pd(_mm256_cmpgt_epi32(k_int_vec, _mm256_set1_epi32(1)));
+
+        y_vec = _mm256_add_pd(y_vec, 
+            _mm256_add_pd(
+                _mm256_and_pd(mask0, min_vec), 
+                _mm256_add_pd(
+                    _mm256_and_pd(mask1, max_vec), 
+                    _mm256_and_pd(mask_default, sum_sqr_vec)
+                )
+            )
+        );
+
+        _mm256_storeu_pd(&y[i], y_vec);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i += 4)
+    {
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d k_vec = _mm256_floor_pd(_mm256_mul_pd(_mm256_set1_pd(4.0), y_vec));
+        __m256i k_int = _mm256_cvtpd_epi32(k_vec);
+
+        __m256d real = _mm256_loadu_pd(&x[2 * i]);
+        __m256d imag = _mm256_loadu_pd(&x[2 * i + 4]);
+
+        __m256d real_sqr = _mm256_sub_pd(_mm256_mul_pd(real, real), _mm256_mul_pd(imag, imag));
+        __m256d imag_sqr = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(real, imag));
+
+        __m256d sum_sqr = _mm256_add_pd(_mm256_mul_pd(real, real), _mm256_mul_pd(imag, imag));
+
+        __m256d minmax = _mm256_blendv_pd(imag_sqr, real_sqr, _mm256_cmp_pd(k_vec, _mm256_set1_pd(0.5), _CMP_LT_OQ));
+        __m256d update = _mm256_blendv_pd(sum_sqr, minmax, _mm256_or_pd(_mm256_cmpeq_pd(k_vec, _mm256_set1_pd(0.0)), _mm256_cmpeq_pd(k_vec, _mm256_set1_pd(1.0))));
+
+        y_vec = _mm256_add_pd(y_vec, update);
+        _mm256_storeu_pd(&y[i], y_vec);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

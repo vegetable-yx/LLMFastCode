@@ -1,0 +1,361 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// Precondition: 0 <= z[i] < 1.0
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  double t[2];
+  for (int i = 0; i < N; i++)
+  {
+    if (sqrt(x[i * 2] * x[i * 2] + x[i * 2 + 1] * x[i * 2 + 1]) > sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]))
+    {
+      unsigned int k = floor(4.0 * z[i]);
+      switch (k)
+      {
+      case 0:
+        t[0] = x[i * 2] + y[i * 2] * 5.1;
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * 5.1;
+        break;
+      case 1:
+        t[0] = (x[i * 2]) * (y[i * 2] * 2.1) - (x[i * 2 + 1]) * (y[i * 2 + 1] * 2.1);
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * 2.1) + (x[i * 2 + 1]) * (y[i * 2] * 2.1);
+        break;
+      case 2:
+        t[0] = x[i * 2] + y[i * 2] * (-3.5);
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * (-3.5);
+        break;
+      case 3:
+        t[0] = (x[i * 2]) * (y[i * 2] * (-4.1)) - (x[i * 2 + 1]) * (y[i * 2 + 1] * (-4.1));
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * (-4.1)) + (x[i * 2 + 1]) * (y[i * 2] * (-4.1));
+        break;
+      default:
+        break;
+      }
+      z[i] += t[0] + ((t[0]) * (t[0]) - (t[1]) * (t[1]));
+    }
+    else
+    {
+      z[i] += round(((x[i * 2]) * (x[i * 2]) - (x[i * 2 + 1]) * (x[i * 2 + 1]))) + pow(sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]), 2.0);
+    }
+  }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+To optimize the `slow_performance` function into `maxperformance`, we focus on replacing computationally expensive operations with more efficient alternatives, leveraging SIMD instructions for parallel processing, and eliminating branching where possible. Here's the optimized implementation:
+
+```cpp
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const int vec_size = 4;
+    const double four = 4.0;
+    const double five_point_one = 5.1;
+    const double two_point_one = 2.1;
+    const double neg_three_point_five = -3.5;
+    const double neg_four_point_one = -4.1;
+
+    for (int i = 0; i < N; i += vec_size)
+    {
+        __m256d x0 = _mm256_load_pd(&x[i*2]);
+        __m256d x1 = _mm256_load_pd(&x[i*2 + 1]);
+        __m256d y0 = _mm256_load_pd(&y[i*2]);
+        __m256d y1 = _mm256_load_pd(&y[i*2 + 1]);
+        __m256d z_vec = _mm256_load_pd(&z[i]);
+
+        __m256d x_sq = _mm256_fmsub_pd(x0, x0, _mm256_setzero_pd());
+        x_sq = _mm256_fnmadd_pd(x1, x1, x_sq);
+        __m256d y_sq = _mm256_fmsub_pd(y0, y0, _mm256_setzero_pd());
+        y_sq = _mm256_fnmadd_pd(y1, y1, y_sq);
+
+        __m256d x_larger = _mm256_cmp_pd(x_sq, y_sq, _CMP_GT_OQ);
+
+        __m256d z4 = _mm256_mul_pd(z_vec, _mm256_set1_pd(four));
+        __m256i k_int = _mm256_cvttpd_epi32(z4);
+
+        __m256i mask0 = _mm256_cmpeq_epi32(k_int, _mm256_set1_epi32(0));
+        __m256i mask2 = _mm256_cmpeq_epi32(k_int, _mm256_set1_epi32(2));
+        __m256d mask0_pd = _mm256_castsi256_pd(mask0);
+        __m256d mask2_pd = _mm256_castsi256_pd(mask2);
+
+        __m256d coeff_linear = _mm256_blendv_pd(_mm256_setzero_pd(), _mm256_set1_pd(five_point_one), mask0_pd);
+        coeff_linear = _mm256_blendv_pd(coeff_linear, _mm256_set1_pd(neg_three_point_five), mask2_pd);
+
+        __m256d y0_linear = _mm256_mul_pd(y0, coeff_linear);
+        __m256d y1_linear = _mm256_mul_pd(y1, coeff_linear);
+        __m256d t0_linear = _mm256_add_pd(x0, y0_linear);
+        __m256d t1_linear = _mm256_add_pd(x1, y1_linear);
+
+        __m256i mask1 = _mm256_cmpeq_epi32(k_int, _mm256_set1_epi32(1));
+        __m256i mask3 = _mm256_cmpeq_epi32(k_int, _mm256_set1_epi32(3));
+        __m256d mask1_pd = _mm256_castsi256_pd(mask1);
+        __m256d mask3_pd = _mm256_castsi256_pd(mask3);
+
+        __m256d coeff_complex_21 = _mm256_set1_pd(two_point_one);
+        __m256d coeff_complex_m41 = _mm256_set1_pd(neg_four_point_one);
+        __m256d coeff_complex = _mm256_blendv_pd(_mm256_setzero_pd(), coeff_complex_21, mask1_pd);
+        coeff_complex = _mm256_blendv_pd(coeff_complex, coeff_complex_m41, mask3_pd);
+
+        __m256d real_part = _mm256_fmsub_pd(x0, y0, _mm256_mul_pd(x1, y1));
+        __m256d imag_part = _mm256_fmadd_pd(x0, y1, _mm256_mul_pd(x1, y0));
+        __m256d t0_complex = _mm256_mul_pd(real_part, coeff_complex);
+        __m256d t1_complex = _mm256_mul_pd(imag_part, coeff_complex);
+
+        __m256i mask_even_epi32 = _mm256_and_si256(k_int, _mm256_set1_epi32(1));
+        __m256i mask_even = _mm256_cmpeq_epi32(mask_even_epi32, _mm256_setzero_si256());
+        __m256d mask_even_pd = _mm256_castsi256_pd(mask_even);
+
+        __m256d t0 = _mm256_blendv_pd(t0_complex, t0_linear, mask_even_pd);
+        __m256d t1 = _mm256_blendv_pd(t1_complex, t1_linear, mask_even_pd);
+
+        __m256d t0_sq = _mm256_mul_pd(t0, t0);
+        __m256d t1_sq = _mm256_mul_pd(t1, t1);
+        __m256d delta_z_x = _mm256_add_pd(t0, _mm256_sub_pd(t0_sq, t1_sq));
+
+        __m256d x0_sq = _mm256_mul_pd(x0, x0);
+        __m256d x1_sq = _mm256_mul_pd(x1, x1);
+        __m256d x_diff_sq = _mm256_sub_pd(x0_sq, x1_sq);
+        __m256d x_diff_sq_rounded = _mm256_round_pd(x_diff_sq, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d delta_z_y = _mm256_add_pd(x_diff_sq_rounded, y_sq);
+
+        __m256d delta_z = _mm256_blendv_pd(delta_z_y, delta_z_x, x_larger);
+
+        __m256d z_new = _mm256_add_pd(z_vec, delta_z);
+        _mm256_store_pd(&z[i], z_new);
+    }
+
+    for (int i = (N / vec_size) * vec_size; i < N; ++i)
+    {
+        double xi0 = x[i*2], xi1 = x[i*2 +1];
+        double yi0 = y[i*2], yi1 = y[i*2 +1];
+        double zi = z[i];
+
+        double x_mag_sq = xi0*xi0 + xi1*xi1;
+        double y_mag_sq = yi0*yi0 + yi1*yi1;
+
+        if (x_mag_sq > y_mag_sq)
+        {
+            unsigned int k = (unsigned int)(zi *4.0);
+            double t[2] = {0};
+            switch(k)
+            {
+                case 0: t[0] = xi0 + yi0 *5.1; t[1] = xi1 + yi1 *5.1; break;
+                case 1: t[0] = xi0*yi0*2.1 - xi1*yi1*2.1; t[1] = xi0*yi1*2.1 + xi1*yi0*2.1; break;
+                case 2: t[0] = xi0 + yi0 *-3.5; t[1] = xi1 + yi1 *-3.5; break;
+                case 3: t[0] = (xi0*yi0 - xi1*yi1)*-4.1; t[1] = (xi0*yi1 + xi1*yi0)*-4.1; break;
+            }
+            zi += t[0] + (t[0]*t[0] - t[1]*t[1]);
+        }
+        else
+        {
+            double x_diff = xi0*xi0 - xi1*xi1;
+            zi += nearbyint(x_diff) + y_mag_sq;
+        }
+        z[i] = zi;
+    }
+}
+```
+
+
+
+All done!
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+```cpp
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m128d c5_1 = _mm_set1_pd(5.1);
+    const __m128d c2_1 = _mm_set1_pd(2.1);
+    const __m128d c_neg3_5 = _mm_set1_pd(-3.5);
+    const __m128d c_neg4_1 = _mm_set1_pd(-4.1);
+    const __m128d c4_0 = _mm_set1_pd(4.0);
+
+    for (int i = 0; i < N; i++)
+    {
+        double x0 = x[i*2], x1 = x[i*2+1];
+        double y0 = y[i*2], y1 = y[i*2+1];
+        double x_mag_sq = x0*x0 + x1*x1;
+        double y_mag_sq = y0*y0 + y1*y1;
+
+        if (x_mag_sq > y_mag_sq)
+        {
+            __m128d z_vec = _mm_load_sd(&z[i]);
+            __m128d k_val = _mm_mul_pd(z_vec, c4_0);
+            __m128d k_floor = _mm_round_sd(k_val, k_val, _MM_FROUND_FLOOR | _MM_FROUND_NO_EXC);
+            unsigned int k = (unsigned int)_mm_cvtsd_f64(k_floor);
+
+            double t0, t1;
+
+            switch (k)
+            {
+            case 0:
+                {
+                    __m128d x_vec = _mm_loadu_pd(&x[i*2]);
+                    __m128d y_vec = _mm_loadu_pd(&y[i*2]);
+                    __m128d scaled_y = _mm_mul_pd(y_vec, c5_1);
+                    __m128d t_vec = _mm_add_pd(x_vec, scaled_y);
+                    t0 = _mm_cvtsd_f64(t_vec);
+                    t1 = _mm_cvtsd_f64(_mm_shuffle_pd(t_vec, t_vec, 0x1));
+                }
+                break;
+            case 1:
+                {
+                    __m128d x_vec = _mm_loadu_pd(&x[i*2]);
+                    __m128d y_vec = _mm_loadu_pd(&y[i*2]);
+                    __m128d xy_same = _mm_mul_pd(x_vec, y_vec);
+                    __m128d y_shuffled = _mm_shuffle_pd(y_vec, y_vec, 0x1);
+                    __m128d xy_cross = _mm_mul_pd(x_vec, y_shuffled);
+                    __m128d same_diff = _mm_sub_pd(xy_same, _mm_shuffle_pd(xy_same, xy_same, 0x1));
+                    same_diff = _mm_mul_pd(same_diff, c2_1);
+                    t0 = _mm_cvtsd_f64(same_diff);
+                    __m128d cross_sum = _mm_add_pd(xy_cross, _mm_shuffle_pd(xy_cross, xy_cross, 0x1));
+                    cross_sum = _mm_mul_pd(cross_sum, c2_1);
+                    t1 = _mm_cvtsd_f64(cross_sum);
+                }
+                break;
+            case 2:
+                {
+                    __m128d x_vec = _mm_loadu_pd(&x[i*2]);
+                    __m128d y_vec = _mm_loadu_pd(&y[i*2]);
+                    __m128d scaled_y = _mm_mul_pd(y_vec, c_neg3_5);
+                    __m128d t_vec = _mm_add_pd(x_vec, scaled_y);
+                    t0 = _mm_cvtsd_f64(t_vec);
+                    t1 = _mm_cvtsd_f64(_mm_shuffle_pd(t_vec, t_vec, 0x1));
+                }
+                break;
+            case 3:
+                {
+                    __m128d x_vec = _mm_loadu_pd(&x[i*2]);
+                    __m128d y_vec = _mm_loadu_pd(&y[i*2]);
+                    __m128d xy_same = _mm_mul_pd(x_vec, y_vec);
+                    __m128d y_shuffled = _mm_shuffle_pd(y_vec, y_vec, 0x1);
+                    __m128d xy_cross = _mm_mul_pd(x_vec, y_shuffled);
+                    __m128d same_diff = _mm_sub_pd(xy_same, _mm_shuffle_pd(xy_same, xy_same, 0x1));
+                    same_diff = _mm_mul_pd(same_diff, c_neg4_1);
+                    t0 = _mm_cvtsd_f64(same_diff);
+                    __m128d cross_sum = _mm_add_pd(xy_cross, _mm_shuffle_pd(xy_cross, xy_cross, 0x1));
+                    cross_sum = _mm_mul_pd(cross_sum, c_neg4_1);
+                    t1 = _mm_cvtsd_f64(cross_sum);
+                }
+                break;
+            default:
+                t0 = 0.0;
+                t1 = 0.0;
+                break;
+            }
+
+            double delta = t0 + (t0 * t0 - t1 * t1);
+            z[i] += delta;
+        }
+        else
+        {
+            double diff = x0*x0 - x1*x1;
+            __m128d diff_vec = _mm_set_sd(diff);
+            __m128d rounded_vec = _mm_round_sd(diff_vec, diff_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+            double rounded = _mm_cvtsd_f64(rounded_vec);
+            z[i] += rounded + y_mag_sq;
+        }
+    }
+}
+```
+
+
+
+All done!
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9575.44 cycles
+
+Running: maxperformance
+4367.85 cycles
+<<<
+9575.44 / 4367.85 = 2.192254770653754
+================================
+```cpp
+#include <immintrin.h>
+#include "common.h"
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++) {
+        double x0 = x[i*2], x1 = x[i*2+1];
+        double y0 = y[i*2], y1 = y[i*2+1];
+        double x_sq = x0*x0 + x1*x1;
+        double y_sq = y0*y0 + y1*y1;
+
+        if (x_sq > y_sq) {
+            unsigned int k = (unsigned int)(4.0 * z[i]);
+            double t0, t1;
+
+            switch (k) {
+            case 0:
+                t0 = x0 + 5.1 * y0;
+                t1 = x1 + 5.1 * y1;
+                break;
+            case 1:
+                double a = x0*y0 - x1*y1;
+                double b = x0*y1 + x1*y0;
+                t0 = 2.1 * a;
+                t1 = 2.1 * b;
+                break;
+            case 2:
+                t0 = x0 + (-3.5) * y0;
+                t1 = x1 + (-3.5) * y1;
+                break;
+            case 3:
+                a = x0*y0 - x1*y1;
+                b = x0*y1 + x1*y0;
+                t0 = -4.1 * a;
+                t1 = -4.1 * b;
+                break;
+            default:
+                t0 = t1 = 0.0;
+                break;
+            }
+
+            z[i] += t0 + (t0*t0 - t1*t1);
+        } else {
+            double dx = x0*x0 - x1*x1;
+            z[i] += __builtin_round(dx) + y_sq;
+        }
+    }
+}
+```
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

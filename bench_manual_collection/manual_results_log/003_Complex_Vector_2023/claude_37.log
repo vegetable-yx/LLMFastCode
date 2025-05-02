@@ -1,0 +1,300 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
+
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+}
+```
+
+
+================================
+```
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    const __m256d FOUR = _mm256_set1_pd(4.0);
+    const __m256d TWO = _mm256_set1_pd(2.0);
+    
+    for (int i = 0; i < n; i += 4)
+    {
+        // Prefetch future data
+        _mm_prefetch(&y[i + 16], _MM_HINT_T0);
+        _mm_prefetch(&x[2*(i + 16)], _MM_HINT_T0);
+        
+        // Load y values and compute k
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d k_float = _mm256_floor_pd(_mm256_mul_pd(y_vec, FOUR));
+        
+        // Convert to integers
+        __m128i k_int = _mm256_cvtpd_epi32(k_float);
+        alignas(16) int k_arr[4];
+        _mm_store_si128((__m128i*)k_arr, k_int);
+        
+        // Process each element
+        alignas(32) double results[4];
+        for (int j = 0; j < 4; j++)
+        {
+            double real = x[2 * (i + j)];
+            double imag = x[2 * (i + j) + 1];
+            
+            double real_squared = real * real;
+            double imag_squared = imag * imag;
+            
+            double diff = real_squared - imag_squared;
+            double prod = 2.0 * real * imag;
+            double sum = real_squared + imag_squared;
+            
+            switch (k_arr[j])
+            {
+            case 0:
+                results[j] = (diff < prod) ? diff : prod;  // min
+                break;
+            case 1:
+                results[j] = (diff > prod) ? diff : prod;  // max
+                break;
+            default:
+                results[j] = sum;  // sum for k >= 2
+                break;
+            }
+        }
+        
+        // Update y values
+        __m256d result_vec = _mm256_loadu_pd(results);
+        _mm256_storeu_pd(&y[i], _mm256_add_pd(y_vec, result_vec));
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+6157.29 cycles
+
+Running: maxperformance
+5794.03 cycles
+<<<
+WA
+================================
+void maxperformance(double *__restrict x, double *__restrict y, int n)
+{
+    // Process 4 elements at a time (SIMD width for doubles)
+    for (int i = 0; i < n; i += 4)
+    {
+        // Load 4 y values
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        
+        // Calculate k values (floor(4.0 * y[i]))
+        __m256d y_times_4 = _mm256_mul_pd(y_vec, _mm256_set1_pd(4.0));
+        __m256d k_float = _mm256_floor_pd(y_times_4);
+        
+        // Convert to integers
+        __m128i k_ints = _mm256_cvttpd_epi32(k_float);
+        int k_vals[4];
+        _mm_storeu_si128((__m128i*)k_vals, k_ints);
+        
+        // Load and process real and imaginary parts
+        double real_vals[4], imag_vals[4];
+        for (int j = 0; j < 4; j++)
+        {
+            real_vals[j] = x[2*(i+j)];
+            imag_vals[j] = x[2*(i+j)+1];
+        }
+        
+        // Create SIMD vectors for real and imag parts
+        __m256d real_vec = _mm256_loadu_pd(real_vals);
+        __m256d imag_vec = _mm256_loadu_pd(imag_vals);
+        
+        // Compute squares
+        __m256d real_squared = _mm256_mul_pd(real_vec, real_vec);
+        __m256d imag_squared = _mm256_mul_pd(imag_vec, imag_vec);
+        
+        // Compute real and imag parts of squared complex number
+        __m256d real_part = _mm256_sub_pd(real_squared, imag_squared);
+        __m256d imag_part = _mm256_mul_pd(
+            _mm256_mul_pd(real_vec, imag_vec),
+            _mm256_set1_pd(2.0)
+        );
+        
+        // Compute magnitude squared
+        __m256d mag_squared = _mm256_add_pd(real_squared, imag_squared);
+        
+        // Compute min/max
+        __m256d min_parts = _mm256_min_pd(real_part, imag_part);
+        __m256d max_parts = _mm256_max_pd(real_part, imag_part);
+        
+        // Store to arrays
+        double min_vals[4], max_vals[4], mag_vals[4];
+        _mm256_storeu_pd(min_vals, min_parts);
+        _mm256_storeu_pd(max_vals, max_parts);
+        _mm256_storeu_pd(mag_vals, mag_squared);
+        
+        // Update y based on k
+        for (int j = 0; j < 4; j++)
+        {
+            unsigned int k = (unsigned int)k_vals[j];
+            if (k == 0)
+                y[i+j] += min_vals[j];
+            else if (k == 1)
+                y[i+j] += max_vals[j];
+            else
+                y[i+j] += mag_vals[j];
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+7416.88 cycles
+
+Running: maxperformance
+4585.93 cycles
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    // Constants
+    const __m256d four_vec = _mm256_set1_pd(4.0);
+    const __m256d two_vec = _mm256_set1_pd(2.0);
+
+    // Process 8 elements at a time
+    for (int i = 0; i < n; i += 8)
+    {
+        // Prefetch future data
+        _mm_prefetch((const char*)&y[i+32], _MM_HINT_T0);
+        _mm_prefetch((const char*)&x[2*(i+32)], _MM_HINT_T0);
+        
+        // Calculate k values for first 4 elements
+        __m256d y_vals1 = _mm256_loadu_pd(&y[i]);
+        __m256d scaled_y1 = _mm256_mul_pd(y_vals1, four_vec);
+        __m256d floor_y1 = _mm256_floor_pd(scaled_y1);
+        __m128i k_vals1 = _mm256_cvtpd_epi32(floor_y1);
+        
+        // Calculate k values for next 4 elements
+        __m256d y_vals2 = _mm256_loadu_pd(&y[i+4]);
+        __m256d scaled_y2 = _mm256_mul_pd(y_vals2, four_vec);
+        __m256d floor_y2 = _mm256_floor_pd(scaled_y2);
+        __m128i k_vals2 = _mm256_cvtpd_epi32(floor_y2);
+        
+        // Process first 4 elements
+        for (int j = 0; j < 4; j++)
+        {
+            int idx = i + j;
+            int k = _mm_extract_epi32(k_vals1, j);
+            
+            double real = x[2*idx];
+            double imag = x[2*idx+1];
+            
+            double real_squared = real * real;
+            double imag_squared = imag * imag;
+            
+            double result;
+            if (k < 2)
+            {
+                double real_sqr = real_squared - imag_squared;
+                double imag_sqr = 2.0 * real * imag;
+                
+                result = (k == 0) ? 
+                    ((real_sqr < imag_sqr) ? real_sqr : imag_sqr) : 
+                    ((real_sqr > imag_sqr) ? real_sqr : imag_sqr);
+            }
+            else
+            {
+                result = real_squared + imag_squared;
+            }
+            
+            y[idx] += result;
+        }
+        
+        // Process next 4 elements
+        for (int j = 0; j < 4; j++)
+        {
+            int idx = i + 4 + j;
+            int k = _mm_extract_epi32(k_vals2, j);
+            
+            double real = x[2*idx];
+            double imag = x[2*idx+1];
+            
+            double real_squared = real * real;
+            double imag_squared = imag * imag;
+            
+            double result;
+            if (k < 2)
+            {
+                double real_sqr = real_squared - imag_squared;
+                double imag_sqr = 2.0 * real * imag;
+                
+                result = (k == 0) ? 
+                    ((real_sqr < imag_sqr) ? real_sqr : imag_sqr) : 
+                    ((real_sqr > imag_sqr) ? real_sqr : imag_sqr);
+            }
+            else
+            {
+                result = real_squared + imag_squared;
+            }
+            
+            y[idx] += result;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+6997 cycles
+
+Running: maxperformance
+4091.05 cycles
+<<<
+WA
+================================

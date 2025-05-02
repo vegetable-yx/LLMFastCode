@@ -1,0 +1,127 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+void slow_performance1(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    // Create a mask for negating the imaginary part
+    __m128d negate_mask = _mm_set_pd(-0.0, 0.0);
+    
+    for (int i = 0; i < 4; i++) {
+        const int x_base = i * 2;
+        const int y_base = i * 8;
+        
+        // Unrolled inner loop for j
+        __m128d x_0_i = _mm_loadu_pd(&x[0 + x_base]);
+        x_0_i = _mm_xor_pd(x_0_i, negate_mask);
+        _mm_storeu_pd(&y[y_base + 0], x_0_i);
+        
+        __m128d x_1_i = _mm_loadu_pd(&x[8 + x_base]);
+        x_1_i = _mm_xor_pd(x_1_i, negate_mask);
+        _mm_storeu_pd(&y[y_base + 2], x_1_i);
+        
+        __m128d x_2_i = _mm_loadu_pd(&x[16 + x_base]);
+        x_2_i = _mm_xor_pd(x_2_i, negate_mask);
+        _mm_storeu_pd(&y[y_base + 4], x_2_i);
+        
+        __m128d x_3_i = _mm_loadu_pd(&x[24 + x_base]);
+        x_3_i = _mm_xor_pd(x_3_i, negate_mask);
+        _mm_storeu_pd(&y[y_base + 6], x_3_i);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.5145 cycles
+
+Running: maxperformance
+6.57932 cycles
+<<<
+26.5145 / 6.57932 = 4.0299757421739635
+================================
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    // Create a sign mask for conjugating complex numbers (negate imaginary part)
+    __m128d conj_mask = _mm_set_pd(-1.0, 1.0);
+    
+    // Process all 16 complex numbers with fully unrolled operations
+    
+    // Row 0, Col 0-3
+    _mm_storeu_pd(&y[0*8 + 0*2], _mm_mul_pd(_mm_loadu_pd(&x[0*8 + 0*2]), conj_mask));
+    _mm_storeu_pd(&y[0*8 + 1*2], _mm_mul_pd(_mm_loadu_pd(&x[1*8 + 0*2]), conj_mask));
+    _mm_storeu_pd(&y[0*8 + 2*2], _mm_mul_pd(_mm_loadu_pd(&x[2*8 + 0*2]), conj_mask));
+    _mm_storeu_pd(&y[0*8 + 3*2], _mm_mul_pd(_mm_loadu_pd(&x[3*8 + 0*2]), conj_mask));
+    
+    // Row 1, Col 0-3
+    _mm_storeu_pd(&y[1*8 + 0*2], _mm_mul_pd(_mm_loadu_pd(&x[0*8 + 1*2]), conj_mask));
+    _mm_storeu_pd(&y[1*8 + 1*2], _mm_mul_pd(_mm_loadu_pd(&x[1*8 + 1*2]), conj_mask));
+    _mm_storeu_pd(&y[1*8 + 2*2], _mm_mul_pd(_mm_loadu_pd(&x[2*8 + 1*2]), conj_mask));
+    _mm_storeu_pd(&y[1*8 + 3*2], _mm_mul_pd(_mm_loadu_pd(&x[3*8 + 1*2]), conj_mask));
+    
+    // Row 2, Col 0-3
+    _mm_storeu_pd(&y[2*8 + 0*2], _mm_mul_pd(_mm_loadu_pd(&x[0*8 + 2*2]), conj_mask));
+    _mm_storeu_pd(&y[2*8 + 1*2], _mm_mul_pd(_mm_loadu_pd(&x[1*8 + 2*2]), conj_mask));
+    _mm_storeu_pd(&y[2*8 + 2*2], _mm_mul_pd(_mm_loadu_pd(&x[2*8 + 2*2]), conj_mask));
+    _mm_storeu_pd(&y[2*8 + 3*2], _mm_mul_pd(_mm_loadu_pd(&x[3*8 + 2*2]), conj_mask));
+    
+    // Row 3, Col 0-3
+    _mm_storeu_pd(&y[3*8 + 0*2], _mm_mul_pd(_mm_loadu_pd(&x[0*8 + 3*2]), conj_mask));
+    _mm_storeu_pd(&y[3*8 + 1*2], _mm_mul_pd(_mm_loadu_pd(&x[1*8 + 3*2]), conj_mask));
+    _mm_storeu_pd(&y[3*8 + 2*2], _mm_mul_pd(_mm_loadu_pd(&x[2*8 + 3*2]), conj_mask));
+    _mm_storeu_pd(&y[3*8 + 3*2], _mm_mul_pd(_mm_loadu_pd(&x[3*8 + 3*2]), conj_mask));
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.5004 cycles
+
+Running: maxperformance
+6.60119 cycles
+<<<
+26.5004 / 6.60119 = 4.014488296807091
+================================
+
+>>>
+
+<<<
+
+================================

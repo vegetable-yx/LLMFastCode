@@ -1,0 +1,234 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+void slow_performance1(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
+        }
+    }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+```cpp
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    __m256d row0 = _mm256_loadu_pd(&x[0]);
+    __m256d row1 = _mm256_loadu_pd(&x[8]);
+    __m256d row2 = _mm256_loadu_pd(&x[16]);
+    __m256d row3 = _mm256_loadu_pd(&x[24]);
+
+    __m256d row0_1 = _mm256_loadu_pd(&x[4]);
+    __m256d row1_1 = _mm256_loadu_pd(&x[12]);
+    __m256d row2_1 = _mm256_loadu_pd(&x[20]);
+    __m256d row3_1 = _mm256_loadu_pd(&x[28]);
+
+    __m256d t0 = _mm256_unpacklo_pd(row0, row1);
+    __m256d t1 = _mm256_unpackhi_pd(row0, row1);
+    __m256d t2 = _mm256_unpacklo_pd(row2, row3);
+    __m256d t3 = _mm256_unpackhi_pd(row2, row3);
+
+    __m256d s0 = _mm256_permute2f128_pd(t0, t2, 0x20);
+    __m256d s1 = _mm256_permute2f128_pd(t1, t3, 0x20);
+    __m256d s2 = _mm256_permute2f128_pd(t0, t2, 0x31);
+    __m256d s3 = _mm256_permute2f128_pd(t1, t3, 0x31);
+
+    _mm256_storeu_pd(&y[0], s0);
+    _mm256_storeu_pd(&y[8], s1);
+    _mm256_storeu_pd(&y[16], s2);
+    _mm256_storeu_pd(&y[24], s3);
+
+    __m256d t4 = _mm256_unpacklo_pd(row0_1, row1_1);
+    __m256d t5 = _mm256_unpackhi_pd(row0_1, row1_1);
+    __m256d t6 = _mm256_unpacklo_pd(row2_1, row3_1);
+    __m256d t7 = _mm256_unpackhi_pd(row2_1, row3_1);
+
+    __m256d s4 = _mm256_permute2f128_pd(t4, t6, 0x20);
+    __m256d s5 = _mm256_permute2f128_pd(t5, t7, 0x20);
+    __m256d s6 = _mm256_permute2f128_pd(t4, t6, 0x31);
+    __m256d s7 = _mm256_permute2f128_pd(t5, t7, 0x31);
+
+    __m256d neg_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000ULL));
+    s4 = _mm256_xor_pd(s4, neg_mask);
+    s5 = _mm256_xor_pd(s5, neg_mask);
+    s6 = _mm256_xor_pd(s6, neg_mask);
+    s7 = _mm256_xor_pd(s7, neg_mask);
+
+    _mm256_storeu_pd(&y[4], s4);
+    _mm256_storeu_pd(&y[12], s5);
+    _mm256_storeu_pd(&y[20], s6);
+    _mm256_storeu_pd(&y[28], s7);
+}
+``````cpp
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    __m256d row0 = _mm256_loadu_pd(&x[0]);
+    __m256d row1 = _mm256_loadu_pd(&x[8]);
+    __m256d row2 = _mm256_loadu_pd(&x[16]);
+    __m256d row3 = _mm256_loadu_pd(&x[24]);
+
+    __m256d row0_1 = _mm256_loadu_pd(&x[4]);
+    __m256d row1_1 = _mm256_loadu_pd(&x[12]);
+    __m256d row2_1 = _mm256_loadu_pd(&x[20]);
+    __m256d row3_1 = _mm256_loadu_pd(&x[28]);
+
+    __m256d t0 = _mm256_unpacklo_pd(row0, row1);
+    __m256d t1 = _mm256_unpackhi_pd(row0, row1);
+    __m256d t2 = _mm256_unpacklo_pd(row2, row3);
+    __m256d t3 = _mm256_unpackhi_pd(row2, row3);
+
+    __m256d s0 = _mm256_permute2f128_pd(t0, t2, 0x20);
+    __m256d s1 = _mm256_permute2f128_pd(t1, t3, 0x20);
+    __m256d s2 = _mm256_permute2f128_pd(t0, t2, 0x31);
+    __m256d s3 = _mm256_permute2f128_pd(t1, t3, 0x31);
+
+    _mm256_storeu_pd(&y[0], s0);
+    _mm256_storeu_pd(&y[8], s1);
+    _mm256_storeu_pd(&y[16], s2);
+    _mm256_storeu_pd(&y[24], s3);
+
+    __m256d t4 = _mm256_unpacklo_pd(row0_1, row1_1);
+    __m256d t5 = _mm256_unpackhi_pd(row0_1, row1_1);
+    __m256d t6 = _mm256_unpacklo_pd(row2_1, row3_1);
+    __m256d t7 = _mm256_unpackhi_pd(row2_1, row3_1);
+
+    __m256d s4 = _mm256_permute2f128_pd(t4, t6, 0x20);
+    __m256d s5 = _mm256_permute2f128_pd(t5, t7, 0x20);
+    __m256d s6 = _mm256_permute2f128_pd(t4, t6, 0x31);
+    __m256d s7 = _mm256_permute2f128_pd(t5, t7, 0x31);
+
+    __m256d neg_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000ULL));
+    s4 = _mm256_xor_pd(s4, neg_mask);
+    s5 = _mm256_xor_pd(s5, neg_mask);
+    s6 = _mm256_xor_pd(s6, neg_mask);
+    s7 = _mm256_xor_pd(s7, neg_mask);
+
+    _mm256_storeu_pd(&y[4], s4);
+    _mm256_storeu_pd(&y[12], s5);
+    _mm256_storeu_pd(&y[20], s6);
+    _mm256_storeu_pd(&y[28], s7);
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.0614 cycles
+
+Running: maxperformance
+6.62339 cycles
+<<<
+WA
+================================
+```cpp
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        __m256d v0 = _mm256_set_pd(
+            -x[24 + i * 2 + 1], x[24 + i * 2],
+            -x[16 + i * 2 + 1], x[16 + i * 2]);
+
+        __m256d v1 = _mm256_set_pd(
+            -x[8 + i * 2 + 1], x[8 + i * 2],
+            -x[i * 2 + 1], x[i * 2]);
+
+        _mm256_storeu_pd(y + i * 8, v1);
+        _mm256_storeu_pd(y + i * 8 + 4, v0);
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+26.637 cycles
+
+Running: maxperformance
+8.96219 cycles
+<<<
+26.637 / 8.96219 = 2.972153011708076
+================================
+```cpp
+#include <immintrin.h>
+
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        __m256d row0 = _mm256_loadu_pd(&x[i * 2 + 0]);
+        __m256d row1 = _mm256_loadu_pd(&x[i * 2 + 8]);
+        __m256d row2 = _mm256_loadu_pd(&x[i * 2 + 16]);
+        __m256d row3 = _mm256_loadu_pd(&x[i * 2 + 24]);
+
+        __m256d t0 = _mm256_unpacklo_pd(row0, row1);
+        __m256d t1 = _mm256_unpackhi_pd(row0, row1);
+        __m256d t2 = _mm256_unpacklo_pd(row2, row3);
+        __m256d t3 = _mm256_unpackhi_pd(row2, row3);
+
+        __m256d col0 = _mm256_permute2f128_pd(t0, t2, 0x20);
+        __m256d col1 = _mm256_permute2f128_pd(t1, t3, 0x20);
+        __m256d col2 = _mm256_permute2f128_pd(t0, t2, 0x31);
+        __m256d col3 = _mm256_permute2f128_pd(t1, t3, 0x31);
+
+        __m256d signflip = _mm256_set_pd(-1.0, 1.0, -1.0, 1.0);
+
+        __m256d r0 = _mm256_mul_pd(col0, signflip);
+        __m256d r1 = _mm256_mul_pd(col1, signflip);
+        __m256d r2 = _mm256_mul_pd(col2, signflip);
+        __m256d r3 = _mm256_mul_pd(col3, signflip);
+
+        _mm_storeu_pd(&y[0 * 8 + i * 2], _mm256_castpd256_pd128(r0));
+        _mm_storeu_pd(&y[1 * 8 + i * 2], _mm256_extractf128_pd(r0, 1));
+        _mm_storeu_pd(&y[2 * 8 + i * 2], _mm256_castpd256_pd128(r1));
+        _mm_storeu_pd(&y[3 * 8 + i * 2], _mm256_extractf128_pd(r1, 1));
+
+        _mm_storeu_pd(&y[4 * 8 + i * 2], _mm256_castpd256_pd128(r2));
+        _mm_storeu_pd(&y[5 * 8 + i * 2], _mm256_extractf128_pd(r2, 1));
+        _mm_storeu_pd(&y[6 * 8 + i * 2], _mm256_castpd256_pd128(r3));
+        _mm_storeu_pd(&y[7 * 8 + i * 2], _mm256_extractf128_pd(r3, 1));
+    }
+}
+```
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+26.4693 cycles
+Segmentation fault
+<<<
+
+================================

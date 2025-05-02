@@ -1,0 +1,285 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// Precondition: 0 <= z[i] < 1.0
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  double t[2];
+  for (int i = 0; i < N; i++)
+  {
+    if (sqrt(x[i * 2] * x[i * 2] + x[i * 2 + 1] * x[i * 2 + 1]) > sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]))
+    {
+      unsigned int k = floor(4.0 * z[i]);
+      switch (k)
+      {
+      case 0:
+        t[0] = x[i * 2] + y[i * 2] * 5.1;
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * 5.1;
+        break;
+      case 1:
+        t[0] = (x[i * 2]) * (y[i * 2] * 2.1) - (x[i * 2 + 1]) * (y[i * 2 + 1] * 2.1);
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * 2.1) + (x[i * 2 + 1]) * (y[i * 2] * 2.1);
+        break;
+      case 2:
+        t[0] = x[i * 2] + y[i * 2] * (-3.5);
+        t[1] = x[i * 2 + 1] + y[i * 2 + 1] * (-3.5);
+        break;
+      case 3:
+        t[0] = (x[i * 2]) * (y[i * 2] * (-4.1)) - (x[i * 2 + 1]) * (y[i * 2 + 1] * (-4.1));
+        t[1] = (x[i * 2]) * (y[i * 2 + 1] * (-4.1)) + (x[i * 2 + 1]) * (y[i * 2] * (-4.1));
+        break;
+      default:
+        break;
+      }
+      z[i] += t[0] + ((t[0]) * (t[0]) - (t[1]) * (t[1]));
+    }
+    else
+    {
+      z[i] += round(((x[i * 2]) * (x[i * 2]) - (x[i * 2 + 1]) * (x[i * 2 + 1]))) + pow(sqrt(y[i * 2] * y[i * 2] + y[i * 2 + 1] * y[i * 2 + 1]), 2.0);
+    }
+  }
+}
+
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+```cpp
+#include <immintrin.h>
+#include <cmath>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  const __m256d coeff_5_1 = _mm256_set1_pd(5.1);
+  const __m256d coeff_2_1 = _mm256_set1_pd(2.1);
+  const __m256d coeff_n3_5 = _mm256_set1_pd(-3.5);
+  const __m256d coeff_n4_1 = _mm256_set1_pd(-4.1);
+  const __m256d four = _mm256_set1_pd(4.0);
+
+  for (int i = 0; i < N; i++)
+  {
+    double xi0 = x[i * 2];
+    double xi1 = x[i * 2 + 1];
+    double yi0 = y[i * 2];
+    double yi1 = y[i * 2 + 1];
+
+    double x_norm2 = xi0 * xi0 + xi1 * xi1;
+    double y_norm2 = yi0 * yi0 + yi1 * yi1;
+
+    if (x_norm2 > y_norm2)
+    {
+      unsigned int k = static_cast<unsigned int>(4.0 * z[i]);
+      double t0, t1;
+
+      switch (k)
+      {
+      case 0:
+        t0 = xi0 + yi0 * 5.1;
+        t1 = xi1 + yi1 * 5.1;
+        break;
+      case 1:
+        t0 = xi0 * (yi0 * 2.1) - xi1 * (yi1 * 2.1);
+        t1 = xi0 * (yi1 * 2.1) + xi1 * (yi0 * 2.1);
+        break;
+      case 2:
+        t0 = xi0 + yi0 * (-3.5);
+        t1 = xi1 + yi1 * (-3.5);
+        break;
+      case 3:
+        t0 = xi0 * (yi0 * -4.1) - xi1 * (yi1 * -4.1);
+        t1 = xi0 * (yi1 * -4.1) + xi1 * (yi0 * -4.1);
+        break;
+      default:
+        t0 = 0.0;
+        t1 = 0.0;
+        break;
+      }
+
+      double tmp = t0 + (t0 * t0 - t1 * t1);
+      z[i] += tmp;
+    }
+    else
+    {
+      double real_sq_diff = xi0 * xi0 - xi1 * xi1;
+      double rounded = round(real_sq_diff);
+      z[i] += rounded + y_norm2;
+    }
+  }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9512.88 cycles
+
+Running: maxperformance
+5780.27 cycles
+<<<
+9512.88 / 5780.27 = 1.6457501120189886
+================================
+```cpp
+#include <immintrin.h>
+#include <cmath>
+#include <stdint.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  const __m256d const_5p1 = _mm256_set1_pd(5.1);
+  const __m256d const_2p1 = _mm256_set1_pd(2.1);
+  const __m256d const_m3p5 = _mm256_set1_pd(-3.5);
+  const __m256d const_m4p1 = _mm256_set1_pd(-4.1);
+
+  for (int i = 0; i < N; i++)
+  {
+    int idx = i * 2;
+    double x0 = x[idx], x1 = x[idx + 1];
+    double y0 = y[idx], y1 = y[idx + 1];
+
+    double x_mag2 = x0 * x0 + x1 * x1;
+    double y_mag2 = y0 * y0 + y1 * y1;
+
+    if (x_mag2 > y_mag2)
+    {
+      unsigned int k = (unsigned int)(z[i] * 4.0);
+      double t0, t1;
+      if (k == 0)
+      {
+        t0 = x0 + y0 * 5.1;
+        t1 = x1 + y1 * 5.1;
+      }
+      else if (k == 1)
+      {
+        double r0 = y0 * 2.1, r1 = y1 * 2.1;
+        t0 = x0 * r0 - x1 * r1;
+        t1 = x0 * r1 + x1 * r0;
+      }
+      else if (k == 2)
+      {
+        t0 = x0 + y0 * (-3.5);
+        t1 = x1 + y1 * (-3.5);
+      }
+      else
+      {
+        double r0 = y0 * (-4.1), r1 = y1 * (-4.1);
+        t0 = x0 * r0 - x1 * r1;
+        t1 = x0 * r1 + x1 * r0;
+      }
+      z[i] += t0 + (t0 * t0 - t1 * t1);
+    }
+    else
+    {
+      z[i] += round(x0 * x0 - x1 * x1) + y_mag2;
+    }
+  }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9431.63 cycles
+
+Running: maxperformance
+6115.09 cycles
+<<<
+9431.63 / 6115.09 = 1.5423534240706185
+================================
+```cpp
+#include <immintrin.h>
+#include <cmath>
+#include <stdint.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+  const __m256d c5_1 = _mm256_set1_pd(5.1);
+  const __m256d c2_1 = _mm256_set1_pd(2.1);
+  const __m256d c3_5 = _mm256_set1_pd(-3.5);
+  const __m256d c4_1 = _mm256_set1_pd(-4.1);
+
+  for (int i = 0; i < N; ++i)
+  {
+    int idx = i * 2;
+    double x0 = x[idx], x1 = x[idx + 1];
+    double y0 = y[idx], y1 = y[idx + 1];
+    double xi2 = x0 * x0 + x1 * x1;
+    double yi2 = y0 * y0 + y1 * y1;
+
+    if (xi2 > yi2)
+    {
+      unsigned int k = (unsigned int)(z[i] * 4.0);
+      double t0, t1;
+      switch (k)
+      {
+      case 0:
+        t0 = x0 + y0 * 5.1;
+        t1 = x1 + y1 * 5.1;
+        break;
+      case 1:
+      {
+        double r0 = y0 * 2.1, r1 = y1 * 2.1;
+        t0 = x0 * r0 - x1 * r1;
+        t1 = x0 * r1 + x1 * r0;
+        break;
+      }
+      case 2:
+        t0 = x0 - y0 * 3.5;
+        t1 = x1 - y1 * 3.5;
+        break;
+      case 3:
+      {
+        double r0 = y0 * -4.1, r1 = y1 * -4.1;
+        t0 = x0 * r0 - x1 * r1;
+        t1 = x0 * r1 + x1 * r0;
+        break;
+      }
+      default:
+        t0 = t1 = 0.0;
+        break;
+      }
+      double tmp = t0 + t0 * t0 - t1 * t1;
+      z[i] += tmp;
+    }
+    else
+    {
+      double r = round(x0 * x0 - x1 * x1) + yi2;
+      z[i] += r;
+    }
+  }
+}
+```
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+9482.58 cycles
+
+Running: maxperformance
+5784.55 cycles
+<<<
+9482.58 / 5784.55 = 1.6392943271300273
+================================

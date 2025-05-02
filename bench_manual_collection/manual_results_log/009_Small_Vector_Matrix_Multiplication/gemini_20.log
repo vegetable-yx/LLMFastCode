@@ -19,58 +19,121 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int unroll_factor = 4;
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int j = 0; j < NC; j += unroll_factor) {
+        __m256d y0 = zero;
+        for (int i = 0; i < NR; i++) {
+            __m256d A_vector = _mm256_loadu_pd(A + i * NC + j);
+            __m256d x_vector = _mm256_set1_pd(x[i]);
+            y0 = _mm256_fmadd_pd(A_vector, x_vector, y0);
+        }
+        _mm256_storeu_pd(y + j, y0);
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+213.079 cycles
+
+Running: max_performance
+648.035 cycles
 <<<
-
+213.079 / 648.035 = 0.32880786
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int NC_register = NC;
+    const int NR_register = NR;
+
+    // Initialize y to 0 using AVX2
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int j = 0; j < NC; j += 4)
+    {
+        _mm256_storeu_pd(&y[j], zero);
+    }
+
+    for (int i = 0; i < NR_register; ++i)
+    {
+        __m256d xi = _mm256_broadcast_sd(&x[i]);
+        for (int j = 0; j < NC_register; j += 4)
+        {
+            __m256d Aj = _mm256_loadu_pd(&A[i * NC_register + j]);
+            __m256d yi = _mm256_loadu_pd(&y[j]);
+            yi = _mm256_fmadd_pd(Aj, xi, yi);
+            _mm256_storeu_pd(&y[j], yi);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+211.613 cycles
+
+Running: max_performance
+250.373 cycles
 <<<
-
+211.613 / 250.373 = 0.84519098
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y) {
+    __m256d zero = _mm256_set1_pd(0.0);
+    __m256d *y_simd = (__m256d *)y;
+    for (int j = 0; j < NC / 4; j++) {
+        y_simd[j] = zero;
+    }
+    for (int i = 0; i < NR; i++) {
+        __m256d xi = _mm256_set1_pd(x[i]);
+        for (int j = 0; j < NC / 4; j++) {
+            __m256d Aj = _mm256_load_pd(A + i * NC + j * 4);
+            y_simd[j] = _mm256_fmadd_pd(Aj, xi, y_simd[j]);
+        }
+    }
+    for (int j = 0; j < (NC % 4); j++) {
+        y[NC - 4 + j] += A[(NR - 1) * NC + NC - 4 + j] * x[NR - 1];
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+209.154 cycles
+
+Running: max_performance
+207.385 cycles
 <<<
-
+209.154 / 207.385 = 1.00853003
 ================================

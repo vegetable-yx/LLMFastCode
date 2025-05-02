@@ -19,58 +19,145 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
+// x, y, z are __attribute__((aligned(32)))
 void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const int n = N;
+    for (int j = 0; j <= n - 4; j += 4) {
+        __m256d vx = _mm_load_pd(&x[j]);
+        __m256d a_vec = _mm_shuffle_pd(vx, vx, _MM_SHUFFLE(2, 3, 0, 1));
+        __m256d b_vec = _mm_load_pd(&y[j]);
+        __m256d ra = _mm_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT);
+        __m256d rb = _mm_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT);
+        __m256d cmp = _mm_cmpgt_pd(ra, rb);
+        __m256d idx = _mm_setr_pd((double)j, (double)(j+1), (double)(j+2), (double)(j+3));
+        __m256d thr_i = _mm_mul_pd(idx, _mm_set1_pd(3.0));
+        __m256d false_res = _mm_sub_pd(b_vec, thr_i);
+        __m256d one_plus_b = _mm_add_pd(b_vec, _mm_set1_pd(1.0));
+        __m256d true_res = _mm_mul_pd(a_vec, one_plus_b);
+        __m256d res = _mm_blendv_pd(false_res, true_res, cmp);
+        _mm_store_pd(&z[j], res);
+    }
+    for (int i = (n / 4) * 4; i < n; ++i) {
+        double a = (i % 2) ? x[i-1] : x[i+1];
+        double b = y[i];
+        z[i] = (round(a) > round(b)) ? a * (1.0 + b) : b - 3.0 * i;
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    const int simd_step = 4;
+    for (int i = 0; i <= N - simd_step; i += simd_step) {
+        __m256d v_x = _mm256_load_pd(x + i);
+        __m256d v_y = _mm256_load_pd(y + i);
+        
+        __m256d v_a = _mm256_permute_pd(v_x, 0xA5);
+        
+        __m256d v_rounded_a = _mm_round_pd(v_a, _MM_FROUND_TO_NEAREST_TIES_TO_EVEN);
+        __m256d v_rounded_b = _mm_round_pd(v_y, _MM_FROUND_TO_NEAREST_TIES_TO_EVEN);
+        
+        __m256i mask = _mm256_cmp_pd(v_rounded_a, v_rounded_b, _CMP_GT_OQ);
+        
+        __m256d v_one = _mm256_set1_pd(1.0);
+        __m256d v_one_plus_b = _mm256_add_pd(v_y, v_one);
+        __m256d v_true = _mm256_mul_pd(v_a, v_one_plus_b);
+        
+        __m256d v_j = _mm256_set_pd(i+3.0, i+2.0, i+1.0, i+0.0);
+        __m256d v_3j = _mm256_mul_pd(v_j, _mm256_set1_pd(3.0));
+        __m256d v_false = _mm256_sub_pd(v_y, v_3j);
+        
+        __m256d v_result = _mm256_mask_blend_pd(mask, v_false, v_true);
+        _mm256_store_pd(z + i, v_result);
+    }
+
+    for (int i = N - (N % simd_step); i < N; i++) {
+        double a = (i % 2) ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a * (1.0 + b);
+        } else {
+            z[i] = b - 3.0 * i;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    const int vec_len = 4;
+    for (int i = 0; i <= N - vec_len; i += vec_len) {
+        __m256d a_vec = _mm256_setr_pd(
+            x[i+1],   // i even
+            x[i],     // i+1 odd
+            x[i+3],   // i+2 even
+            x[i+2]    // i+3 odd
+        );
+        __m256d y_vec = _mm256_load_pd(y + i);
+        
+        __m256d a_round = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d y_round = _mm256_round_pd(y_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d mask = _mm256_cmpgt_pd(a_round, y_round);
+        
+        __m256d one = _mm256_set1_pd(1.0);
+        __m256d case1 = _mm256_mul_pd(a_vec, _mm256_add_pd(y_vec, one));
+        
+        __m256d idx_vec = _mm256_setr_pd((double)i, (double)(i+1), (double)(i+2), (double)(i+3));
+        __m256d three = _mm256_set1_pd(3.0);
+        __m256d case2 = _mm256_sub_pd(y_vec, _mm256_mul_pd(idx_vec, three));
+        
+        __m256d z_vec = _mm256_blendv_pd(case2, case1, mask);
+        _mm256_store_pd(z + i, z_vec);
+    }
+
+    for (int i = (N / vec_len) * vec_len; i < N; ++i) {
+        double a = (i & 1) ? x[i-1] : x[i+1];
+        double b = y[i];
+        double ar = round(a);
+        double br = round(b);
+        z[i] = ar > br ? a * (1.0 + b) : b - 3.0 * i;
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

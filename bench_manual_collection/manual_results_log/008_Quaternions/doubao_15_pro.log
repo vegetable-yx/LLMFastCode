@@ -59,21 +59,178 @@ void max_performance(double*__restrict x, double*__restrict y, double*__restrict
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    __m256d one = _mm256_set1_pd(1.0);
+    __m256d neg_one = _mm256_set1_pd(-1.0);
+    for (int i = 0; i < 2; i++) {
+        __m256d a = _mm256_loadu_pd(x + 4 * i);
+        for (int j = 0; j < 2; j++) {
+            __m256d e = _mm256_loadu_pd(y + 4 * j);
+
+            __m256d ae = _mm256_mul_pd(a, e);
+            __m256d bf = _mm256_permute4x64_pd(a, _MM_SHUFFLE(1, 0, 3, 2));
+            __m256d cg = _mm256_permute4x64_pd(a, _MM_SHUFFLE(2, 3, 0, 1));
+            __m256d dh = _mm256_permute4x64_pd(a, _MM_SHUFFLE(3, 2, 1, 0));
+
+            bf = _mm256_mul_pd(bf, e);
+            cg = _mm256_mul_pd(cg, e);
+            dh = _mm256_mul_pd(dh, e);
+
+            bf = _mm256_mul_pd(bf, neg_one);
+            cg = _mm256_mul_pd(cg, neg_one);
+            dh = _mm256_mul_pd(dh, neg_one);
+
+            __m256d r0 = _mm256_add_pd(ae, _mm256_add_pd(bf, _mm256_add_pd(cg, dh)));
+
+            __m256d af = _mm256_permute4x64_pd(a, _MM_SHUFFLE(1, 0, 3, 2));
+            __m256d be = _mm256_permute4x64_pd(a, _MM_SHUFFLE(0, 1, 2, 3));
+            __m256d ch = _mm256_permute4x64_pd(a, _MM_SHUFFLE(2, 3, 0, 1));
+            __m256d dg = _mm256_permute4x64_pd(a, _MM_SHUFFLE(3, 2, 1, 0));
+
+            af = _mm256_mul_pd(af, e);
+            be = _mm256_mul_pd(be, e);
+            ch = _mm256_mul_pd(ch, e);
+            dg = _mm256_mul_pd(dg, e);
+
+            dg = _mm256_mul_pd(dg, neg_one);
+
+            __m256d r1 = _mm256_add_pd(af, _mm256_add_pd(be, _mm256_add_pd(ch, dg)));
+
+            __m256d ag = _mm256_permute4x64_pd(a, _MM_SHUFFLE(2, 3, 0, 1));
+            __m256d bh = _mm256_permute4x64_pd(a, _MM_SHUFFLE(3, 2, 1, 0));
+            __m256d ce = _mm256_permute4x64_pd(a, _MM_SHUFFLE(0, 1, 2, 3));
+            __m256d df = _mm256_permute4x64_pd(a, _MM_SHUFFLE(1, 0, 3, 2));
+
+            ag = _mm256_mul_pd(ag, e);
+            bh = _mm256_mul_pd(bh, e);
+            ce = _mm256_mul_pd(ce, e);
+            df = _mm256_mul_pd(df, e);
+
+            bh = _mm256_mul_pd(bh, neg_one);
+
+            __m256d r2 = _mm256_add_pd(ag, _mm256_add_pd(bh, _mm256_add_pd(ce, df)));
+
+            __m256d ah = _mm256_permute4x64_pd(a, _MM_SHUFFLE(3, 2, 1, 0));
+            __m256d bg = _mm256_permute4x64_pd(a, _MM_SHUFFLE(2, 3, 0, 1));
+            __m256d cf = _mm256_permute4x64_pd(a, _MM_SHUFFLE(1, 0, 3, 2));
+            __m256d de = _mm256_permute4x64_pd(a, _MM_SHUFFLE(0, 1, 2, 3));
+
+            ah = _mm256_mul_pd(ah, e);
+            bg = _mm256_mul_pd(bg, e);
+            cf = _mm256_mul_pd(cf, e);
+            de = _mm256_mul_pd(de, e);
+
+            cf = _mm256_mul_pd(cf, neg_one);
+
+            __m256d r3 = _mm256_add_pd(ah, _mm256_add_pd(bg, _mm256_add_pd(cf, de)));
+
+            __m256d res = _mm256_permute2f128_pd(_mm256_castpd256_pd128(r0), _mm256_castpd256_pd128(r1), 0x20);
+            res = _mm256_insertf128_pd(res, _mm256_castpd256_pd128(r2), 1);
+            res = _mm256_insertf128_pd(res, _mm256_castpd256_pd128(r3), 2);
+
+
+            int index = 4 * (i * 2 + j);
+            _mm256_storeu_pd(A + index, res);
+
+
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Use AVX2 to load 4 double values at once
+    __m256d a1, a2;
+    for (int i = 0; i < 2; i++) {
+        a1 = _mm256_loadu_pd(x + 4 * i);
+        for (int j = 0; j < 2; j++) {
+            __m256d b1 = _mm256_loadu_pd(y + 4 * j);
+            // Quaternion multiplication
+            // First group of calculations
+            __m256d ae = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(0, 0, 0, 0)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(0, 0, 0, 0)));
+            __m256d bf = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(1, 1, 1, 1)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(1, 1, 1, 1)));
+            __m256d cg = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(2, 2, 2, 2)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(2, 2, 2, 2)));
+            __m256d dh = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(3, 3, 3, 3)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(3, 3, 3, 3)));
+            __m256d r0 = _mm256_sub_pd(_mm256_sub_pd(ae, bf), _mm256_add_pd(cg, dh));
+            // Second group of calculations
+            __m256d af = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(0, 0, 0, 0)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(1, 1, 1, 1)));
+            __m256d be = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(1, 1, 1, 1)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(0, 0, 0, 0)));
+            __m256d ch = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(2, 2, 2, 2)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(3, 3, 3, 3)));
+            __m256d dg = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(3, 3, 3, 3)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(2, 2, 2, 2)));
+            __m256d r1 = _mm256_sub_pd(_mm256_add_pd(_mm256_add_pd(af, be), ch), dg);
+            // Third group of calculations
+            __m256d ag = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(0, 0, 0, 0)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(2, 2, 2, 2)));
+            __m256d bh = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(1, 1, 1, 1)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(3, 3, 3, 3)));
+            __m256d ce = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(2, 2, 2, 2)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(0, 0, 0, 0)));
+            __m256d df = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(3, 3, 3, 3)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(1, 1, 1, 1)));
+            __m256d r2 = _mm256_add_pd(_mm256_add_pd(_mm256_sub_pd(ag, bh), ce), df);
+            // Fourth group of calculations
+            __m256d ah = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(0, 0, 0, 0)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(3, 3, 3, 3)));
+            __m256d bg = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(1, 1, 1, 1)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(2, 2, 2, 2)));
+            __m256d cf = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(2, 2, 2, 2)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(1, 1, 1, 1)));
+            __m256d de = _mm256_mul_pd(_mm256_permute4x64_pd(a1, _MM_SHUFFLE(3, 3, 3, 3)), _mm256_permute4x64_pd(b1, _MM_SHUFFLE(0, 0, 0, 0)));
+            __m256d r3 = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(ah, bg), cf), de);
+
+            __m256d result = _mm256_permute2f128_pd(r0, r1, 0x20);
+            result = _mm256_insertf128_pd(result, r2, 1);
+            result = _mm256_insertf128_pd(result, r3, 3);
+
+            int index = 4 * (i * 2 + j);
+            _mm256_storeu_pd(A + index, result);
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    __m256d a_seg, b_seg, c_seg, d_seg;
+    for (int i = 0; i < 2; i++) {
+        a_seg = _mm256_loadu_pd(&x[4 * i + 0]);
+        b_seg = _mm256_loadu_pd(&x[4 * i + 1]);
+        c_seg = _mm256_loadu_pd(&x[4 * i + 2]);
+        d_seg = _mm256_loadu_pd(&x[4 * i + 3]);
+        for (int j = 0; j < 2; j++) {
+            __m256d e_seg = _mm256_loadu_pd(&y[4 * j + 0]);
+            __m256d f_seg = _mm256_loadu_pd(&y[4 * j + 1]);
+            __m256d g_seg = _mm256_loadu_pd(&y[4 * j + 2]);
+            __m256d h_seg = _mm256_loadu_pd(&y[4 * j + 3]);
+
+            // Quaternion multiplication
+            __m256d r0_seg = _mm256_sub_pd(_mm256_mul_pd(a_seg, e_seg), _mm256_add_pd(_mm256_mul_pd(b_seg, f_seg), _mm256_add_pd(_mm256_mul_pd(c_seg, g_seg), _mm256_mul_pd(d_seg, h_seg))));
+            __m256d r1_seg = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(_mm256_mul_pd(a_seg, f_seg), _mm256_mul_pd(b_seg, e_seg)), _mm256_mul_pd(d_seg, g_seg)), _mm256_mul_pd(c_seg, h_seg));
+            __m256d r2_seg = _mm256_add_pd(_mm256_sub_pd(_mm256_sub_pd(_mm256_mul_pd(a_seg, g_seg), _mm256_mul_pd(b_seg, h_seg)), _mm256_mul_pd(c_seg, e_seg)), _mm256_mul_pd(d_seg, f_seg));
+            __m256d r3_seg = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(_mm256_mul_pd(a_seg, h_seg), _mm256_mul_pd(b_seg, g_seg)), _mm256_mul_pd(c_seg, f_seg)), _mm256_mul_pd(d_seg, e_seg));
+
+            int index = 4 * (i * 2 + j);
+            _mm256_storeu_pd(&A[index + 0], r0_seg);
+            _mm256_storeu_pd(&A[index + 1], r1_seg);
+            _mm256_storeu_pd(&A[index + 2], r2_seg);
+            _mm256_storeu_pd(&A[index + 3], r3_seg);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+12.0065 cycles
+Segmentation fault
 <<<
-
+WA
 ================================

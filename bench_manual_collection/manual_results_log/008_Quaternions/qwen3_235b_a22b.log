@@ -59,21 +59,190 @@ void max_performance(double*__restrict x, double*__restrict y, double*__restrict
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    __m256d x0 = _mm256_loadu_pd(x + 0);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+    __m256d y0 = _mm256_loadu_pd(y + 0);
+    __m256d y1 = _mm256_loadu_pd(y + 4);
+
+    auto compute = [](__m256d a, __m256d b, __m256d c, __m256d d, 
+                      __m256d e, __m256d f, __m256d g, __m256d h) {
+        __m256d r0 = _mm256_fmadd_pd(a, e, 
+                     _mm256_sub_pd(
+                         _mm256_add_pd(
+                             _mm256_mul_pd(b, f), 
+                             _mm256_mul_pd(c, g)), 
+                         _mm256_mul_pd(d, h)));
+        r0 = _mm256_sub_pd(_mm256_mul_pd(a, e), r0);
+        
+        __m256d r1 = _mm256_fmadd_pd(a, f,
+                     _mm256_fmadd_pd(b, e,
+                     _mm256_sub_pd(
+                         _mm256_mul_pd(c, h),
+                         _mm256_mul_pd(d, g))));
+        
+        __m256d r2 = _mm256_fmadd_pd(a, g,
+                     _mm256_fmadd_pd(c, e,
+                     _mm256_sub_pd(
+                         _mm256_mul_pd(d, f),
+                         _mm256_mul_pd(b, h))));
+        
+        __m256d r3 = _mm256_fmadd_pd(a, h,
+                     _mm256_fmadd_pd(b, g,
+                     _mm256_sub_pd(
+                         _mm256_mul_pd(d, e),
+                         _mm256_mul_pd(c, f))));
+        
+        return _mm256_add_pd(
+            _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(
+                _mm256_castps_pd(_mm_permute_ps<_MM_SHUFFLE(1,0,3,2)>(_mm_castpd_ps(r0))),
+                _mm256_castps_pd(_mm_permute_ps<_MM_SHUFFLE(1,0,3,2)>(_mm_castpd_ps(r1))), 
+                _MM_SHUFFLE2(3,1)),
+            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(
+                _mm256_castps_pd(_mm_permute_ps<_MM_SHUFFLE(3,2,1,0)>(_mm_castpd_ps(r2))),
+                _mm256_castps_pd(_mm_permute_ps<_MM_SHUFFLE(3,2,1,0)>(_mm_castpd_ps(r3))), 
+                _MM_SHUFFLE2(2,0)));
+    };
+
+    __m256d x0_y0 = compute(x0, _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(x0,x0), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(x0,x0), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(x0,x0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(3,3)>(y0,y0));
+    
+    __m256d x0_y1 = compute(x0, _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(x0,x0), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(x0,x0), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(x0,x0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(3,3)>(y1,y1));
+    
+    __m256d x1_y0 = compute(x1, _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(x1,x1), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(x1,x1), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(x1,x1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(y0,y0),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(3,3)>(y0,y0));
+    
+    __m256d x1_y1 = compute(x1, _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(x1,x1), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(x1,x1), 
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(x1,x1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(0,0)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(1,1)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(2,2)>(y1,y1),
+                            _mm256_shuffle_pd<_MM_SHUFFLE2(3,3)>(y1,y1));
+
+    _mm256_storeu_pd(A + 0, x0_y0);
+    _mm256_storeu_pd(A + 4, x0_y1);
+    _mm256_storeu_pd(A + 8, x1_y0);
+    _mm256_storeu_pd(A + 12, x1_y1);
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A)
+{
+    const double a0 = x[0], b0 = x[1], c0 = x[2], d0 = x[3];
+    const double a1 = x[4], b1 = x[5], c1 = x[6], d1 = x[7];
+    const double e0 = y[0], f0 = y[1], g0 = y[2], h0 = y[3];
+    const double e1 = y[4], f1 = y[5], g1 = y[6], h1 = y[7];
+
+    // i=0, j=0
+    A[0] = a0 * e0 - b0 * f0 - c0 * g0 - d0 * h0;
+    A[1] = a0 * f0 + b0 * e0 + c0 * h0 - d0 * g0;
+    A[2] = a0 * g0 - b0 * h0 + c0 * e0 + d0 * f0;
+    A[3] = a0 * h0 + b0 * g0 - c0 * f0 + d0 * e0;
+
+    // i=0, j=1
+    A[4] = a0 * e1 - b0 * f1 - c0 * g1 - d0 * h1;
+    A[5] = a0 * f1 + b0 * e1 + c0 * h1 - d0 * g1;
+    A[6] = a0 * g1 - b0 * h1 + c0 * e1 + d0 * f1;
+    A[7] = a0 * h1 + b0 * g1 - c0 * f1 + d0 * e1;
+
+    // i=1, j=0
+    A[8] = a1 * e0 - b1 * f0 - c1 * g0 - d1 * h0;
+    A[9] = a1 * f0 + b1 * e0 + c1 * h0 - d1 * g0;
+    A[10] = a1 * g0 - b1 * h0 + c1 * e0 + d1 * f0;
+    A[11] = a1 * h0 + b1 * g0 - c1 * f0 + d1 * e0;
+
+    // i=1, j=1
+    A[12] = a1 * e1 - b1 * f1 - c1 * g1 - d1 * h1;
+    A[13] = a1 * f1 + b1 * e1 + c1 * h1 - d1 * g1;
+    A[14] = a1 * g1 - b1 * h1 + c1 * e1 + d1 * f1;
+    A[15] = a1 * h1 + b1 * g1 - c1 * f1 + d1 * e1;
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+12.0194 cycles
+
+Running: maxperformance
+9.46007 cycles
 <<<
-
+12.0194 / 9.46007 = 1.27054028
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A)
+{
+    const __m256d x0 = _mm256_loadu_pd(x);
+    const __m256d x1 = _mm256_loadu_pd(x + 4);
+    const __m256d y0 = _mm256_loadu_pd(y);
+    const __m256d y1 = _mm256_loadu_pd(y + 4);
+
+    const __m256d x0_y0 = _mm256_mul_pd(x0, y0);
+    const __m256d x0_y1 = _mm256_mul_pd(x0, y1);
+    const __m256d x1_y0 = _mm256_mul_pd(x1, y0);
+    const __m256d x1_y1 = _mm256_mul_pd(x1, y1);
+
+    const __m256d x0_y0_s = _mm256_permute4x64_pd(x0_y0, 0xB1);
+    const __m256d x0_y1_s = _mm256_permute4x64_pd(x0_y1, 0xB1);
+    const __m256d x1_y0_s = _mm256_permute4x64_pd(x1_y0, 0xB1);
+    const __m256d x1_y1_s = _mm256_permute4x64_pd(x1_y1, 0xB1);
+
+    const __m128d r00_1 = _mm_sub_pd(_mm256_castpd256_pd128(x0_y0), _mm256_extractf128_pd(x0_y0, 1));
+    const __m128d r01_1 = _mm_sub_pd(_mm256_castpd256_pd128(x0_y1), _mm256_extractf128_pd(x0_y1, 1));
+    const __m128d r10_1 = _mm_sub_pd(_mm256_castpd256_pd128(x1_y0), _mm256_extractf128_pd(x1_y0, 1));
+    const __m128d r11_1 = _mm_sub_pd(_mm256_castpd256_pd128(x1_y1), _mm256_extractf128_pd(x1_y1, 1));
+
+    double* r00_r3 = (double*)&r00_1;
+    double* r01_r3 = (double*)&r01_1;
+    double* r10_r3 = (double*)&r10_1;
+    double* r11_r3 = (double*)&r11_1;
+
+    A[0]  = r00_r3[0] - r00_r3[1];
+    A[1]  = r00_r3[0] + r00_r3[1] + r00_s[2] - r00_s[3];
+    A[2]  = r00_r3[0] - r00_s[3] + r00_r3[1] + r00_s[2];
+    A[3]  = r00_r3[0] + r00_s[3] - r00_s[2] + r00_r3[1];
+    A[4]  = r01_r3[0] - r01_r3[1];
+    A[5]  = r01_r3[0] + r01_r3[1] + r01_s[2] - r01_s[3];
+    A[6]  = r01_r3[0] - r01_s[3] + r01_r3[1] + r01_s[2];
+    A[7]  = r01_r3[0] + r01_s[3] - r01_s[2] + r01_r3[1];
+    A[8]  = r10_r3[0] - r10_r3[1];
+    A[9]  = r10_r3[0] + r10_r3[1] + r10_s[2] - r10_s[3];
+    A[10] = r10_r3[0] - r10_s[3] + r10_r3[1] + r10_s[2];
+    A[11] = r10_r3[0] + r10_s[3] - r10_s[2] + r10_r3[1];
+    A[12] = r11_r3[0] - r11_r3[1];
+    A[13] = r11_r3[0] + r11_r3[1] + r11_s[2] - r11_s[3];
+    A[14] = r11_r3[0] - r11_s[3] + r11_r3[1] + r11_s[2];
+    A[15] = r11_r3[0] + r11_s[3] - r11_s[2] + r11_r3[1];
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

@@ -19,58 +19,162 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    // Zero initialize y using SIMD
+    for (int j = 0; j <= NC - 4; j += 4) {
+        _mm256_storeu_pd(&y[j], _mm256_setzero_pd());
+    }
+    for (int j = (NC / 4) * 4; j < NC; j++) {
+        y[j] = 0.0;
+    }
+
+    // Main computation with AVX-2 vectorization
+    for (int i = 0; i < NR; i++) {
+        double xi = x[i];
+        __m256d xi_vec = _mm256_set1_pd(xi);
+        for (int j = 0; j <= NC - 4; j += 4) {
+            __m256d a_vec = _mm256_loadu_pd(&A[i * NC + j]);
+            __m256d product = _mm256_mul_pd(a_vec, xi_vec);
+            __m256d y_vec = _mm256_loadu_pd(&y[j]);
+            y_vec = _mm256_add_pd(y_vec, product);
+            _mm256_storeu_pd(&y[j], y_vec);
+        }
+        // Handle remaining elements with scalar operations
+        int j = (NC / 4) * 4;
+        for (; j < NC; j++) {
+            y[j] += A[i * NC + j] * xi;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+208.71 cycles
+
+Running: max_performance
+209.697 cycles
 <<<
-
+208.71 / 209.697 = 0.99529321
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int NC_vec_init = NC / 4;
+    const int NC_rem_init = NC % 4;
+    __m256d zero = _mm256_setzero_pd();
+
+    for (int j = 0; j < NC_vec_init; j++) {
+        _mm256_storeu_pd(y + j * 4, zero);
+    }
+    for (int j = NC_vec_init * 4; j < NC; j++) {
+        y[j] = 0.0;
+    }
+
+    const int NC_full = NC - (NC % 4);
+
+    for (int i = 0; i < NR; i++) {
+        double xi = x[i];
+        double *row_A = A + i * NC;
+        __m256d xi_vec = _mm256_set1_pd(xi);
+
+        for (int j = 0; j < NC_full; j += 4) {
+            __m256d a = _mm256_loadu_pd(row_A + j);
+            __m256d prod = _mm256_mul_pd(a, xi_vec);
+            __m256d y_vec = _mm256_loadu_pd(y + j);
+            y_vec = _mm256_add_pd(y_vec, prod);
+            _mm256_storeu_pd(y + j, y_vec);
+        }
+
+        for (int j = NC_full; j < NC; j++) {
+            y[j] += row_A[j] * xi;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+212.522 cycles
+
+Running: max_performance
+208.471 cycles
 <<<
-
+212.522 / 208.471 = 1.01943196
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y) {
+    const int VECTOR_SIZE = 4;
+    const int num_full_chunks = NC / VECTOR_SIZE;
+    const int remainder = NC % VECTOR_SIZE;
+
+    // Initialize y to zero with SIMD
+    for (int j = 0; j < num_full_chunks * VECTOR_SIZE; j += VECTOR_SIZE) {
+        _mm256_store_pd(y + j, _mm256_setzero_pd());
+    }
+    for (int j = num_full_chunks * VECTOR_SIZE; j < NC; j++) {
+        y[j] = 0.0;
+    }
+
+    // Main computation with SIMD vectorization
+    for (int i = 0; i < NR; i++) {
+        double xi = x[i];
+        __m256d xi_vec = _mm256_set1_pd(xi);
+
+        // Vectorized part
+        for (int j = 0; j < num_full_chunks * VECTOR_SIZE; j += VECTOR_SIZE) {
+            __m256d a_vec = _mm256_load_pd(A + i * NC + j);
+            __m256d product = _mm256_mul_pd(a_vec, xi_vec);
+            __m256d y_vec = _mm256_load_pd(y + j);
+            y_vec = _mm256_add_pd(y_vec, product);
+            _mm256_store_pd(y + j, y_vec);
+        }
+
+        // Scalar remainder handling
+        if (remainder > 0) {
+            int j_start = num_full_chunks * VECTOR_SIZE;
+            for (int j = j_start; j < NC; j++) {
+                y[j] += A[i * NC + j] * xi;
+            }
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+208.637 cycles
+
+Running: max_performance
+207.179 cycles
 <<<
-
+208.637 / 207.179 = 1.00703739
 ================================

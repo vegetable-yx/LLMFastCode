@@ -59,21 +59,257 @@ void max_performance(double*__restrict x, double*__restrict y, double*__restrict
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Load x quaternions (i=0 and i=1)
+    __m256d vx0 = _mm256_load_pd(&x[0]);
+    __m256d vx1 = _mm256_load_pd(&x[4]);
+    
+    // Load y quaternions (j=0 and j=1) and precompute shuffled versions
+    __m256d vy0 = _mm256_load_pd(&y[0]);
+    __m256d vy0_s1 = _mm256_shuffle_pd(vy0, vy0, _MM_SHUFFLE(1,0,3,2)); // (f,e,h,g)
+    __m256d vy0_s2 = _mm256_shuffle_pd(vy0, vy0, _MM_SHUFFLE(2,3,0,1)); // (g,h,e,f)
+    __m256d vy0_s3 = _mm256_shuffle_pd(vy0, vy0, _MM_SHUFFLE(3,2,1,0)); // (h,g,f,e)
+    
+    __m256d vy1 = _mm256_load_pd(&y[4]);
+    __m256d vy1_s1 = _mm256_shuffle_pd(vy1, vy1, _MM_SHUFFLE(1,0,3,2)); // (f',e',h',g')
+    __m256d vy1_s2 = _mm256_shuffle_pd(vy1, vy1, _MM_SHUFFLE(2,3,0,1)); // (g',h',e',f')
+    __m256d vy1_s3 = _mm256_shuffle_pd(vy1, vy1, _MM_SHUFFLE(3,2,1,0)); // (h',g',f',e')
+    
+    // Case (i=0, j=0)
+    {
+        __m256d prod0 = _mm256_mul_pd(vx0, vy0);
+        __m256d prod_s1 = _mm256_mul_pd(vx0, vy0_s1);
+        __m256d prod_s2 = _mm256_mul_pd(vx0, vy0_s2);
+        __m256d prod_s3 = _mm256_mul_pd(vx0, vy0_s3);
+        
+        double r0 = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        double r1 = prod_s1[0] + prod_s1[1] + prod_s1[2] - prod_s1[3];
+        double r2 = prod_s2[0] - prod_s2[1] + prod_s2[2] + prod_s2[3];
+        double r3 = prod_s3[0] + prod_s3[1] - prod_s3[2] + prod_s3[3];
+        
+        A[0] = r0;
+        A[1] = r1;
+        A[2] = r2;
+        A[3] = r3;
+    }
+    
+    // Case (i=0, j=1)
+    {
+        __m256d prod0 = _mm256_mul_pd(vx0, vy1);
+        __m256d prod_s1 = _mm256_mul_pd(vx0, vy1_s1);
+        __m256d prod_s2 = _mm256_mul_pd(vx0, vy1_s2);
+        __m256d prod_s3 = _mm256_mul_pd(vx0, vy1_s3);
+        
+        double r0 = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        double r1 = prod_s1[0] + prod_s1[1] + prod_s1[2] - prod_s1[3];
+        double r2 = prod_s2[0] - prod_s2[1] + prod_s2[2] + prod_s2[3];
+        double r3 = prod_s3[0] + prod_s3[1] - prod_s3[2] + prod_s3[3];
+        
+        A[4] = r0;
+        A[5] = r1;
+        A[6] = r2;
+        A[7] = r3;
+    }
+    
+    // Case (i=1, j=0)
+    {
+        __m256d prod0 = _mm256_mul_pd(vx1, vy0);
+        __m256d prod_s1 = _mm256_mul_pd(vx1, vy0_s1);
+        __m256d prod_s2 = _mm256_mul_pd(vx1, vy0_s2);
+        __m256d prod_s3 = _mm256_mul_pd(vx1, vy0_s3);
+        
+        double r0 = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        double r1 = prod_s1[0] + prod_s1[1] + prod_s1[2] - prod_s1[3];
+        double r2 = prod_s2[0] - prod_s2[1] + prod_s2[2] + prod_s2[3];
+        double r3 = prod_s3[0] + prod_s3[1] - prod_s3[2] + prod_s3[3];
+        
+        A[8] = r0;
+        A[9] = r1;
+        A[10] = r2;
+        A[11] = r3;
+    }
+    
+    // Case (i=1, j=1)
+    {
+        __m256d prod0 = _mm256_mul_pd(vx1, vy1);
+        __m256d prod_s1 = _mm256_mul_pd(vx1, vy1_s1);
+        __m256d prod_s2 = _mm256_mul_pd(vx1, vy1_s2);
+        __m256d prod_s3 = _mm256_mul_pd(vx1, vy1_s3);
+        
+        double r0 = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        double r1 = prod_s1[0] + prod_s1[1] + prod_s1[2] - prod_s1[3];
+        double r2 = prod_s2[0] - prod_s2[1] + prod_s2[2] + prod_s2[3];
+        double r3 = prod_s3[0] + prod_s3[1] - prod_s3[2] + prod_s3[3];
+        
+        A[12] = r0;
+        A[13] = r1;
+        A[14] = r2;
+        A[15] = r3;
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+11.5481 cycles
+
+Running: maxperformance
+41.5938 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Process (i=0, j=0)
+    {
+        __m256d q1 = _mm256_loadu_pd(&x[0]);
+        __m256d q2 = _mm256_loadu_pd(&y[0]);
+        __m256d prod0 = _mm256_mul_pd(q1, q2);
+        __m256d q2_perm1 = _mm256_permute_pd(q2, 0xA1);
+        __m256d prod1 = _mm256_mul_pd(q1, q2_perm1);
+        __m256d q2_perm2 = _mm256_permute_pd(q2, 0xB2);
+        __m256d prod2 = _mm256_mul_pd(q1, q2_perm2);
+        __m256d q2_perm3 = _mm256_permute_pd(q2, 0xC3);
+        __m256d prod3 = _mm256_mul_pd(q1, q2_perm3);
+
+        A[0] = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        A[1] = prod1[0] + prod1[1] + prod1[2] - prod1[3];
+        A[2] = prod2[0] - prod2[1] + prod2[2] + prod2[3];
+        A[3] = prod3[0] + prod3[1] - prod3[2] + prod3[3];
+    }
+
+    // Process (i=0, j=1)
+    {
+        __m256d q1 = _mm256_loadu_pd(&x[0]);
+        __m256d q2 = _mm256_loadu_pd(&y[4]);
+        __m256d prod0 = _mm256_mul_pd(q1, q2);
+        __m256d q2_perm1 = _mm256_permute_pd(q2, 0xA1);
+        __m256d prod1 = _mm256_mul_pd(q1, q2_perm1);
+        __m256d q2_perm2 = _mm256_permute_pd(q2, 0xB2);
+        __m256d prod2 = _mm256_mul_pd(q1, q2_perm2);
+        __m256d q2_perm3 = _mm256_permute_pd(q2, 0xC3);
+        __m256d prod3 = _mm256_mul_pd(q1, q2_perm3);
+
+        A[4] = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        A[5] = prod1[0] + prod1[1] + prod1[2] - prod1[3];
+        A[6] = prod2[0] - prod2[1] + prod2[2] + prod2[3];
+        A[7] = prod3[0] + prod3[1] - prod3[2] + prod3[3];
+    }
+
+    // Process (i=1, j=0)
+    {
+        __m256d q1 = _mm256_loadu_pd(&x[4]);
+        __m256d q2 = _mm256_loadu_pd(&y[0]);
+        __m256d prod0 = _mm256_mul_pd(q1, q2);
+        __m256d q2_perm1 = _mm256_permute_pd(q2, 0xA1);
+        __m256d prod1 = _mm256_mul_pd(q1, q2_perm1);
+        __m256d q2_perm2 = _mm256_permute_pd(q2, 0xB2);
+        __m256d prod2 = _mm256_mul_pd(q1, q2_perm2);
+        __m256d q2_perm3 = _mm256_permute_pd(q2, 0xC3);
+        __m256d prod3 = _mm256_mul_pd(q1, q2_perm3);
+
+        A[8] = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        A[9] = prod1[0] + prod1[1] + prod1[2] - prod1[3];
+        A[10] = prod2[0] - prod2[1] + prod2[2] + prod2[3];
+        A[11] = prod3[0] + prod3[1] - prod3[2] + prod3[3];
+    }
+
+    // Process (i=1, j=1)
+    {
+        __m256d q1 = _mm256_loadu_pd(&x[4]);
+        __m256d q2 = _mm256_loadu_pd(&y[4]);
+        __m256d prod0 = _mm256_mul_pd(q1, q2);
+        __m256d q2_perm1 = _mm256_permute_pd(q2, 0xA1);
+        __m256d prod1 = _mm256_mul_pd(q1, q2_perm1);
+        __m256d q2_perm2 = _mm256_permute_pd(q2, 0xB2);
+        __m256d prod2 = _mm256_mul_pd(q1, q2_perm2);
+        __m256d q2_perm3 = _mm256_permute_pd(q2, 0xC3);
+        __m256d prod3 = _mm256_mul_pd(q1, q2_perm3);
+
+        A[12] = prod0[0] - prod0[1] - prod0[2] - prod0[3];
+        A[13] = prod1[0] + prod1[1] + prod1[2] - prod1[3];
+        A[14] = prod2[0] - prod2[1] + prod2[2] + prod2[3];
+        A[15] = prod3[0] + prod3[1] - prod3[2] + prod3[3];
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+11.9217 cycles
+
+Running: maxperformance
+41.2269 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Process (i=0, j=0)
+    {
+        __m256d vx = _mm256_load_pd(x + 0);
+        __m256d vy = _mm256_load_pd(y + 0);
+        double a = vx[0], b = vx[1], c = vx[2], d = vx[3];
+        double e = vy[0], f = vy[1], g = vy[2], h = vy[3];
+        A[0] = a*e - b*f - c*g - d*h;
+        A[1] = a*f + b*e + c*h - d*g;
+        A[2] = a*g - b*h + c*e + d*f;
+        A[3] = a*h + b*g - c*f + d*e;
+    }
+    
+    // Process (i=0, j=1)
+    {
+        __m256d vx = _mm256_load_pd(x + 0);
+        __m256d vy = _mm256_load_pd(y + 4);
+        double a = vx[0], b = vx[1], c = vx[2], d = vx[3];
+        double e = vy[0], f = vy[1], g = vy[2], h = vy[3];
+        A[4] = a*e - b*f - c*g - d*h;
+        A[5] = a*f + b*e + c*h - d*g;
+        A[6] = a*g - b*h + c*e + d*f;
+        A[7] = a*h + b*g - c*f + d*e;
+    }
+    
+    // Process (i=1, j=0)
+    {
+        __m256d vx = _mm256_load_pd(x + 4);
+        __m256d vy = _mm256_load_pd(y + 0);
+        double a = vx[0], b = vx[1], c = vx[2], d = vx[3];
+        double e = vy[0], f = vy[1], g = vy[2], h = vy[3];
+        A[8] = a*e - b*f - c*g - d*h;
+        A[9] = a*f + b*e + c*h - d*g;
+        A[10] = a*g - b*h + c*e + d*f;
+        A[11] = a*h + b*g - c*f + d*e;
+    }
+    
+    // Process (i=1, j=1)
+    {
+        __m256d vx = _mm256_load_pd(x + 4);
+        __m256d vy = _mm256_load_pd(y + 4);
+        double a = vx[0], b = vx[1], c = vx[2], d = vx[3];
+        double e = vy[0], f = vy[1], g = vy[2], h = vy[3];
+        A[12] = a*e - b*f - c*g - d*h;
+        A[13] = a*f + b*e + c*h - d*g;
+        A[14] = a*g - b*h + c*e + d*f;
+        A[15] = a*h + b*g - c*f + d*e;
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+11.7398 cycles
+
+Running: maxperformance
+10.5514 cycles
 <<<
-
+11.7398 / 10.5514 = 1.1126296
 ================================

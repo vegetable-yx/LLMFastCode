@@ -19,58 +19,169 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    for (int j = 0; j < NC; j++) {
+        y[j] = 0;
+    }
+
+    const int unroll_factor = 8;
+    const int aligned_NC = NC - (NC % unroll_factor);
+    
+    for (int i = 0; i < NR; i++) {
+        __m256d xvec[unroll_factor/4];
+        for (int k = 0; k < unroll_factor; k += 4) {
+            xvec[k/4] = _mm256_broadcast_sd(x + i);
+        }
+
+        int j = 0;
+        for (; j < aligned_NC; j += unroll_factor) {
+            const int base = i * NC + j;
+            __m256d a0 = _mm256_loadu_pd(&A[base]);
+            __m256d a1 = _mm256_loadu_pd(&A[base + 4]);
+            __m256d y0 = _mm256_loadu_pd(&y[j]);
+            __m256d y1 = _mm256_loadu_pd(&y[j + 4]);
+
+            y0 = _mm256_fmadd_pd(a0, xvec[0], y0);
+            y1 = _mm256_fmadd_pd(a1, xvec[1], y1);
+
+            _mm256_storeu_pd(&y[j], y0);
+            _mm256_storeu_pd(&y[j + 4], y1);
+        }
+
+        for (; j < NC; j++) {
+            y[j] += A[i * NC + j] * x[i];
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+209.134 cycles
+
+Running: max_performance
+249.261 cycles
 <<<
-
+209.134 / 249.261 = 0.83901613
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y) {
+    // Zero y using vectorized instructions
+    const int VECSIZE = 4;
+    for (int j = 0; j <= NC - VECSIZE; j += VECSIZE) {
+        _mm256_storeu_pd(&y[j], _mm256_setzero_pd());
+    }
+    for (int j = NC - (NC % VECSIZE); j < NC; ++j) {
+        y[j] = 0.0;
+    }
+
+    // Process each row
+    for (int i = 0; i < NR; ++i) {
+        const double xi = x[i];
+        if (xi == 0.0) continue; // Skip zero contributions
+
+        // Load broadcast vector for xi
+        const __m256d xvec = _mm256_set1_pd(xi);
+        const double* A_row = &A[i * NC];
+        
+        // Accumulate row with optimized vectorization
+        int j = 0;
+        for (; j <= NC - VECSIZE; j += VECSIZE) {
+            __m256d a = _mm256_loadu_pd(&A_row[j]);
+            __m256d yval = _mm256_loadu_pd(&y[j]);
+            yval = _mm256_fmadd_pd(a, xvec, yval);
+            _mm256_storeu_pd(&y[j], yval);
+        }
+
+        // Handle the remaining elements in scalar context
+        for (; j < NC; ++j) {
+            y[j] += A_row[j] * xi;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+209.562 cycles
+
+Running: max_performance
+698.237 cycles
 <<<
-
+209.562 / 698.237 = 0.30013019
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int nc = NC;
+    int j = 0;
+    __m256d zero = _mm256_setzero_pd();
+
+    // Vectorized zero initialization
+    for (; j <= nc - 4; j += 4)
+        _mm256_storeu_pd(&y[j], zero);
+    
+    // Remaining 0 to 3 elements
+    for (; j < nc; ++j)
+        y[j] = 0.0;
+
+    // Process each row i of A
+    for (int i = 0; i < NR; ++i) {
+        double xi = x[i];
+        __m256d x_vec = _mm256_set1_pd(xi);
+        const int row_base = i * NC;
+
+        int j = 0;
+        // AVX2 loop (4 elements)
+        for (; j <= nc - 4; j += 4) {
+            __m256d a_vec = _mm256_loadu_pd(&A[row_base + j]);
+            __m256d y_vec = _mm256_loadu_pd(&y[j]);
+            y_vec = _mm256_fmadd_pd(a_vec, x_vec, y_vec);
+            _mm256_storeu_pd(&y[j], y_vec);
+        }
+
+        // Scalar loop for the remaining elements
+        for (; j < nc; ++j)
+            y[j] += A[row_base + j] * xi;
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+210.005 cycles
+
+Running: max_performance
+207.986 cycles
 <<<
-
+210.005 / 207.986 = 1.00970738
 ================================

@@ -19,58 +19,155 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
+// x, y, z are __attribute__((aligned(32)))
 void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const int unroll_factor = 4;
+    for (int i = 0; i < N; i += unroll_factor) {
+        __m256d a_values, b_values;
+        __m256i cond;
+        for (int j = 0; j < unroll_factor; ++j) {
+            if ((i + j) % 2) {
+                a_values = _mm256_insertf128_pd(a_values, _mm_loadu_pd(x + i + j - 1), j / 2);
+            } else {
+                a_values = _mm256_insertf128_pd(a_values, _mm_loadu_pd(x + i + j + 1), j / 2);
+            }
+            b_values = _mm256_insertf128_pd(b_values, _mm_loadu_pd(y + i + j), j / 2);
+        }
+        __m256d a_round = _mm256_round_pd(a_values, _MM_FROUND_TO_NEAREST_INT);
+        __m256d b_round = _mm256_round_pd(b_values, _MM_FROUND_TO_NEAREST_INT);
+        cond = _mm256_cmp_pd_mask(a_round, b_round, _CMP_GT_OS);
+        __m256d first_result = _mm256_fmadd_pd(a_values, b_values, a_values);
+        __m256i indices = _mm256_setr_epi32(i, i + 1, i + 2, i + 3);
+        __m256d three_times_i = _mm256_cvtepi32_pd(indices);
+        three_times_i = _mm256_mul_pd(three_times_i, _mm256_set1_pd(3.0));
+        __m256d second_result = _mm256_sub_pd(b_values, three_times_i);
+        __m256d final_result = _mm256_mask_blend_pd(cond, first_result, second_result);
+        for (int j = 0; j < unroll_factor; ++j) {
+            _mm_storeu_pd(z + i + j, _mm256_extractf128_pd(final_result, j / 2));
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d zero = _mm256_set1_pd(0.0);
+    __m256d three = _mm256_set1_pd(3.0);
+    for (int i = 0; i < N; i += 4) {
+        __m256i indices = _mm256_set_epi32(i + 3, i + 2, i + 1, i);
+        __m256i indices_mod_2 = _mm256_and_si256(_mm256_cmplt_epi32(indices, _mm256_set1_epi32(2)), _mm256_set1_epi32(1));
+        __m256i select_indices = _mm256_sub_epi32(indices_mod_2, _mm256_set1_epi32(1));
+
+        __m256d x_vec = _mm256_loadu_pd(x + i);
+        __m256d y_vec = _mm256_loadu_pd(y + i);
+        __m256d shifted_x_vec1 = _mm256_permute2f128_pd(x_vec, x_vec, _MM_SHUFFLE(2, 3, 0, 1));
+        __m256d shifted_x_vec2 = _mm256_permute2f128_pd(x_vec, x_vec, _MM_SHUFFLE(0, 1, 2, 3));
+
+        __m256d a_vec = _mm256_blendv_pd(shifted_x_vec2, shifted_x_vec1, _mm256_castsi256_pd(select_indices));
+
+        __m256d round_a = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d round_b = _mm256_round_pd(y_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+
+        __m256i cmp = _mm256_cmpgt_pd(round_a, round_b);
+
+        __m256d result1 = _mm256_fmadd_pd(a_vec, y_vec, a_vec);
+        __m256d indices_d = _mm256_cvtepi32_pd(indices);
+        __m256d result2 = _mm256_fmsub_pd(three, indices_d, y_vec);
+
+        __m256d final_result = _mm256_blendv_pd(result2, result1, _mm256_castsi256_pd(cmp));
+
+        _mm256_storeu_pd(z + i, final_result);
+    }
+    for (int i = (N / 4) * 4; i < N; ++i) {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        }
+        else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+// x, y, z are __attribute__((aligned(32)))
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    const int N = 4; // assuming we can unroll and process 4 elements at a time for SIMD (common multiple for AVX2 doubles)
+    __m256i offsets = _mm256_set_epi32(3, 2, 1, 0);
+    __m256i indices = _mm256_set_epi32(3, 2, 1, 0);
+    int num_iters = N / 4;
+    for (int iter = 0; iter < num_iters; ++iter) {
+        __m256d a_vec, b_vec;
+        __m256i mod2_vec = _mm256_mod_epi32(_mm256_add_epi32(indices, _mm256_set1_epi32(iter * 4)), _mm256_set1_epi32(2));
+        __m256d x_vec = _mm256_load_pd(x + iter * 4);
+        __m256d next_x_vec = _mm256_load_pd(x + iter * 4 + 4);
+        __m256d prev_x_vec = (iter == 0) ? 
+                             _mm256_set1_pd(x[0]) : 
+                             _mm256_load_pd(x + iter * 4 - 4);
+        __m256d y_vec = _mm256_load_pd(y + iter * 4);
+
+        __m256d cond1 = _mm256_cmpgt_pd(_mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT),
+                                        _mm256_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT));
+
+        __m256d then_vec = _mm256_fmadd_pd(a_vec, b_vec, a_vec);
+        __m256d else_vec = _mm256_sub_pd(b_vec, _mm256_cvtepi32_pd(_mm256_mullo_epi32(offsets, _mm256_set1_epi32(3) )));
+
+        __m256d result = _mm256_blendv_pd(else_vec, then_vec, cond1);
+        _mm256_store_pd(z + iter * 4, result);
+        indices = _mm256_add_epi32(indices, _mm256_set1_epi32(4));
+    }
+    for (int i = num_iters * 4; i < N; ++i) {
+        double a = (i % 2)? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        } else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

@@ -19,58 +19,131 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int NC_VEC = NC / 4;
+    const int NC_REST = NC % 4;
+
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int j = 0; j < NC_VEC; j++) {
+        _mm256_storeu_pd(y + j * 4, zero);
+    }
+    for (int j = NC_VEC * 4; j < NC; j++) {
+        y[j] = 0;
+    }
+
+    for (int i = 0; i < NR; i++) {
+        double xi = x[i];
+        __m256d xi_vec = _mm256_set1_pd(xi);
+
+        for (int j = 0; j < NC_VEC; j++) {
+            __m256d A_row_j = _mm256_loadu_pd(A + i * NC + j * 4);
+            __m256d y_j = _mm256_loadu_pd(y + j * 4);
+            y_j = _mm256_fmadd_pd(A_row_j, xi_vec, y_j);
+            _mm256_storeu_pd(y + j * 4, y_j);
+        }
+
+        for (int j = NC_VEC * 4; j < NC; j++) {
+            y[j] += A[i * NC + j] * xi;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+209.474 cycles
+
+Running: max_performance
+209.188 cycles
 <<<
-
+209.474 / 209.188 = 1.00136719
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    __m256d zero = _mm256_setzero_pd();
+    for (int j = 0; j < NC; j += 4)
+    {
+        _mm256_storeu_pd(y + j, zero);
+    }
+
+    for (int i = 0; i < NR; i++)
+    {
+        double xi = x[i];
+        __m256d xmmxi = _mm256_set1_pd(xi);
+        for (int j = 0; j < NC; j += 4)
+        {
+            __m256d tmp = _mm256_loadu_pd(A + i * NC + j);
+            tmp = _mm256_mul_pd(tmp, xmmxi);
+            __m256d old_y = _mm256_loadu_pd(y + j);
+            old_y = _mm256_add_pd(old_y, tmp);
+            _mm256_storeu_pd(y + j, old_y);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+209.64 cycles
+
+Running: max_performance
+209.72 cycles
 <<<
-
+209.64 / 209.72 = 0.99961854
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    const int unroll_factor = 4;
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int j = 0; j < NC; j += unroll_factor) {
+        __m256d y0 = zero;
+        for (int i = 0; i < NR; i++) {
+            __m256d A_vector = _mm256_loadu_pd(A + i * NC + j);
+            __m256d x_vector = _mm256_set1_pd(x[i]);
+            y0 = _mm256_fmadd_pd(A_vector, x_vector, y0);
+        }
+        _mm256_storeu_pd(y + j, y0);
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+207.57 cycles
+
+Running: max_performance
+647.479 cycles
 <<<
-
+207.57 / 647.479 = 0.32058183
 ================================

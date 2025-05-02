@@ -19,58 +19,159 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
+// x, y, z are __attribute__((aligned(32)))
 void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    int i = 0;
+    const __m256d base_step = _mm256_setr_pd(0.0, 3.0, 6.0, 9.0);
+    for (; i <= N - 4; i += 4) {
+        __m256d x_vec = _mm256_load_pd(x + i);
+        __m256d a_vec = _mm256_permute4x64_pd(x_vec, 0xB1);
+        __m256d b_vec = _mm256_load_pd(y + i);
+        
+        __m256d rounded_a = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d cmp = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OS);
+        
+        __m256d then_val = _mm256_mul_pd(a_vec, _mm256_add_pd(_mm256_set1_pd(1.0), b_vec));
+        __m256d three_i = _mm256_set1_pd(3.0 * i);
+        __m256d else_val = _mm256_sub_pd(b_vec, _mm256_add_pd(three_i, base_step));
+        
+        _mm256_store_pd(z + i, _mm256_blendv_pd(else_val, then_val, cmp));
+    }
+    for (; i < N; ++i) {
+        __m128d a = _mm_set_sd((i % 2) ? x[i - 1] : x[i + 1]);
+        __m128d b = _mm_set_sd(y[i]);
+        __m128d ra = _mm_round_sd(a, a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m128d rb = _mm_round_sd(b, b, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        
+        if (_mm_comigt_sd(ra, rb)) {
+            _mm_store_sd(z + i, _mm_add_sd(a, _mm_mul_sd(a, b)));
+        } else {
+            _mm_store_sd(z + i, _mm_sub_sd(b, _mm_set_sd(3.0 * i)));
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+16269.6 cycles
+
+Running: max_performance
+847.578 cycles
 <<<
-
+16269.6 / 847.578 = 19.19540149
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    const __m256d inc = _mm256_setr_pd(0.0, 1.0, 2.0, 3.0);
+    const __m256d three = _mm256_set1_pd(3.0);
+    int i = 0;
+    for (; i <= N - 4; i += 4) {
+        __m256d x_vec = _mm256_load_pd(x + i);
+        __m256d a_vec = _mm256_permute4x64_pd(x_vec, 0x4E);
+        __m256d b_vec = _mm256_load_pd(y + i);
+        __m256d a_round = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT);
+        __m256d b_round = _mm256_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT);
+        __m256d cmp = _mm256_cmp_pd(a_round, b_round, _CMP_GT_OQ);
+        __m256d then_val = _mm256_mul_pd(a_vec, _mm256_add_pd(_mm256_set1_pd(1.0), b_vec));
+        __m256d i_base = _mm256_set1_pd(i);
+        __m256d i_vec = _mm256_add_pd(i_base, inc);
+        __m256d else_val = _mm256_sub_pd(b_vec, _mm256_mul_pd(three, i_vec));
+        __m256d res = _mm256_blendv_pd(else_val, then_val, cmp);
+        _mm256_store_pd(z + i, res);
+    }
+    for (; i < N; ++i) {
+        double a = (i % 2) ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        } else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+16033.7 cycles
+
+Running: max_performance
+806.894 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    int i = 0;
+    for (; i <= N - 4; i += 4) {
+        __m256d x_vec = _mm256_load_pd(x + i);
+        __m256d a = _mm256_permute4x64_pd(x_vec, 0xB1);
+        __m256d b = _mm256_load_pd(y + i);
+        
+        __m256d ra = _mm256_round_pd(a, _MM_FROUND_TO_NEAREST_INT);
+        __m256d rb = _mm256_round_pd(b, _MM_FROUND_TO_NEAREST_INT);
+        __m256d cmp = _mm256_cmp_pd(ra, rb, _CMP_GT_OQ);
+        
+        __m256d part1 = _mm256_fmadd_pd(a, b, a);
+        
+        __m256d base = _mm256_set1_pd(i);
+        __m256d off = _mm256_set_pd(3.0, 2.0, 1.0, 0.0);
+        __m256d three_i = _mm256_mul_pd(_mm256_add_pd(base, off), _mm256_set1_pd(3.0));
+        __m256d part2 = _mm256_sub_pd(b, three_i);
+        
+        __m256d res = _mm256_blendv_pd(part2, part1, cmp);
+        _mm256_store_pd(z + i, res);
+    }
+    for (; i < N; ++i) {
+        double a = (i % 2) ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        z[i] = (round(a) > round(b)) ? a + a * b : b - 3 * i;
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+15924.4 cycles
+
+Running: max_performance
+784.819 cycles
 <<<
-
+15924.4 / 784.819 = 20.29053833
 ================================

@@ -112,15 +112,14 @@ void max_performance(double *__restrict x, double *__restrict y, int n)
 ```
 >>>
 Starting program. 2 functions registered.
-The result of the 2th function is not correct.
 
 Running: slow_performance
-6157.29 cycles
+7266.09 cycles
 
 Running: maxperformance
-5794.03 cycles
+6114.97 cycles
 <<<
-WA
+7266.09 / 6114.97 = 1.188246221976559
 ================================
 void maxperformance(double *__restrict x, double *__restrict y, int n)
 {
@@ -190,15 +189,14 @@ void maxperformance(double *__restrict x, double *__restrict y, int n)
 }
 >>>
 Starting program. 2 functions registered.
-The result of the 2th function is not correct.
 
 Running: slow_performance
-7416.88 cycles
+7021.91 cycles
 
 Running: maxperformance
-4585.93 cycles
+4640.05 cycles
 <<<
-WA
+7021.91 / 4640.05 = 1.5133263650176183
 ================================
 void max_performance(double *__restrict x, double *__restrict y, int n)
 {
@@ -291,10 +289,10 @@ Starting program. 2 functions registered.
 The result of the 2th function is not correct.
 
 Running: slow_performance
-6997 cycles
+6651.53 cycles
 
 Running: maxperformance
-4091.05 cycles
+3732.41 cycles
 <<<
 WA
 ================================

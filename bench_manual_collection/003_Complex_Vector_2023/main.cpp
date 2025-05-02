@@ -51,26 +51,28 @@ using namespace std;
 
 void kernel_base(double *x, double *y, int n)
 {
-    for (int i = 0; i < n; i++) {
-      unsigned int k = floor(4.0 * y[i]);
+  for (int i = 0; i < n; i++)
+  {
+    unsigned int k = floor(4.0 * y[i]);
 
-      double real = x[2 * i];
-      double imag = x[2 * i + 1];
+    double real = x[2 * i];
+    double imag = x[2 * i + 1];
 
-      double real_sqr = real * real - imag * imag;
-      double imag_sqr = 2.0 * real * imag;
+    double real_sqr = real * real - imag * imag;
+    double imag_sqr = 2.0 * real * imag;
 
-      switch (k) {
-          case 0:
-              y[i] += fmin(real_sqr, imag_sqr);
-              break;
-          case 1:
-              y[i] += fmax(real_sqr, imag_sqr);
-              break;
-          default:
-              y[i] += real * real + imag * imag;
-              break;
-      }
+    switch (k)
+    {
+    case 0:
+      y[i] += fmin(real_sqr, imag_sqr);
+      break;
+    case 1:
+      y[i] += fmax(real_sqr, imag_sqr);
+      break;
+    default:
+      y[i] += real * real + imag * imag;
+      break;
+    }
   }
 }
 
@@ -110,9 +112,9 @@ double perf_test(comp_func f, string desc, int flops)
   double multiplier = 1;
   myInt64 start, end;
 
-  alignas(32) double x[2*N];
+  alignas(32) double x[2 * N];
   alignas(32) double y[N];
-  rands((double *)x, 2*N);
+  rands((double *)x, 2 * N);
   rands((double *)y, N);
 
   // Warm-up phase: we determine a number of executions that allows
@@ -179,10 +181,10 @@ int main(int argc, char **argv)
   cout << numFuncs << " functions registered." << endl;
 
   // Check validity of functions.
-  alignas(32) double x[2*N];
+  alignas(32) double x[2 * N];
   alignas(32) double y[N];
   alignas(32) double y_base[N];
-  rands((double *)x, 2*N);
+  rands((double *)x, 2 * N);
   rands((double *)y, N);
   memcpy(y_base, y, sizeof(double) * N);
 

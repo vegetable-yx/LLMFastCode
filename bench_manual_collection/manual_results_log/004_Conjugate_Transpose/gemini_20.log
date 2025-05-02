@@ -16,61 +16,157 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 
 ```
-#include <immintrin.h>
-#include "common.h"
-
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void maxperformance(double *__restrict x, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d x0, x1, x2, x3;
+
+    x0 = _mm256_loadu_pd(x + 0);
+    x1 = _mm256_loadu_pd(x + 8);
+    x2 = _mm256_loadu_pd(x + 16);
+    x3 = _mm256_loadu_pd(x + 24);
+
+    __m256d y0_0 = _mm256_permute4x64_pd(x0, 0b00000000);
+    __m256d y0_1 = _mm256_permute4x64_pd(x1, 0b00000000);
+    __m256d y0_2 = _mm256_permute4x64_pd(x2, 0b00000000);
+    __m256d y0_3 = _mm256_permute4x64_pd(x3, 0b00000000);
+
+    __m256d y1_0 = _mm256_permute4x64_pd(x0, 0b00000011);
+    __m256d y1_1 = _mm256_permute4x64_pd(x1, 0b00000011);
+    __m256d y1_2 = _mm256_permute4x64_pd(x2, 0b00000011);
+    __m256d y1_3 = _mm256_permute4x64_pd(x3, 0b00000011);
+        
+    __m256d sign_mask = _mm256_set_pd(1.0, -1.0, 1.0, -1.0);    
+
+    y1_0 = _mm256_mul_pd(y1_0, sign_mask);
+    y1_1 = _mm256_mul_pd(y1_1, sign_mask);
+    y1_2 = _mm256_mul_pd(y1_2, sign_mask);
+    y1_3 = _mm256_mul_pd(y1_3, sign_mask);
+    
+    _mm256_storeu_pd(y + 0, _mm256_unpacklo_pd(y0_0, y1_0));
+    _mm256_storeu_pd(y + 8, _mm256_unpackhi_pd(y0_0, y1_0));
+    _mm256_storeu_pd(y + 16, _mm256_unpacklo_pd(y0_1, y1_1));
+    _mm256_storeu_pd(y + 24, _mm256_unpackhi_pd(y0_1, y1_1));
+    _mm256_storeu_pd(y + 32, _mm256_unpacklo_pd(y0_2, y1_2));
+    _mm256_storeu_pd(y + 40, _mm256_unpackhi_pd(y0_2, y1_2));
+    _mm256_storeu_pd(y + 48, _mm256_unpacklo_pd(y0_3, y1_3));
+    _mm256_storeu_pd(y + 56, _mm256_unpackhi_pd(y0_3, y1_3));
+    
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+27.0292 cycles
+Segmentation fault
 <<<
-
+WA
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d x0, x1, x2, x3;
+    __m256d y0, y1, y2, y3;
+    double sign_mask[4] = {1.0, -1.0, 1.0, -1.0};
+    __m256d sign = _mm256_loadu_pd(sign_mask);
+
+
+    x0 = _mm256_set_pd(x[0 * 2 + 0*8+0],x[0 * 2 + 0*8+1], x[0 * 2 + 1*8+0],x[0 * 2 + 1*8+1]);
+    x1 = _mm256_set_pd(x[1 * 2 + 0*8+0],x[1 * 2 + 0*8+1], x[1 * 2 + 1*8+0],x[1 * 2 + 1*8+1]);
+    x2 = _mm256_set_pd(x[2 * 2 + 0*8+0],x[2 * 2 + 0*8+1], x[2 * 2 + 1*8+0],x[2 * 2 + 1*8+1]);
+    x3 = _mm256_set_pd(x[3 * 2 + 0*8+0],x[3 * 2 + 0*8+1], x[3 * 2 + 1*8+0],x[3 * 2 + 1*8+1]);
+    y0 = _mm256_permute4x64_pd(x0, 0b00001011);
+    y1 = _mm256_permute4x64_pd(x1, 0b00001011);
+    y2 = _mm256_permute4x64_pd(x2, 0b00001011);
+    y3 = _mm256_permute4x64_pd(x3, 0b00001011);
+
+    y0 = _mm256_mul_pd(y0, sign);
+    y1 = _mm256_mul_pd(y1, sign);
+    y2 = _mm256_mul_pd(y2, sign);
+    y3 = _mm256_mul_pd(y3, sign);
+
+
+
+
+    _mm256_storeu_pd(y + 0 * 8 + 0, y0);
+    _mm256_storeu_pd(y + 1 * 8 + 0, y1);
+    _mm256_storeu_pd(y + 2 * 8 + 0, y2);
+    _mm256_storeu_pd(y + 3 * 8 + 0, y3);
+
+
+
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.4709 cycles
+
+Running: max_performance
+6.23726 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        __m256d x0 = _mm256_loadu_pd(x + i * 2);
+        __m256d x1 = _mm256_loadu_pd(x + i * 2 + 8);
+        __m256d x2 = _mm256_loadu_pd(x + i * 2 + 16);
+        __m256d x3 = _mm256_loadu_pd(x + i * 2 + 24);
+
+        __m256d y0_a  = _mm256_permute2f128_pd(x0, x2, 0x20);
+        __m256d y0_b  = _mm256_permute2f128_pd(x1, x3, 0x20);
+        __m256d y1_a =  _mm256_permute2f128_pd(x0, x2, 0x31);
+        __m256d y1_b = _mm256_permute2f128_pd(x1, x3, 0x31);
+        
+        __m256d y0_c = _mm256_unpacklo_pd(y0_a, y0_b);
+        __m256d y0_d = _mm256_unpackhi_pd(y0_a, y0_b);
+        __m256d y1_c = _mm256_unpacklo_pd(y1_a, y1_b);
+        __m256d y1_d = _mm256_unpackhi_pd(y1_a, y1_b);
+
+        __m256d neg_mask = _mm256_set_pd(1.0, -1.0, 1.0, -1.0);
+        y1_c = _mm256_mul_pd(y1_c, neg_mask);
+        y1_d = _mm256_mul_pd(y1_d, neg_mask);
+
+
+        _mm256_storeu_pd(y + i * 8, y0_c);
+        _mm256_storeu_pd(y + i * 8 + 4, y0_d);
+        _mm256_storeu_pd(y + i * 8 + 2, y1_c);
+        _mm256_storeu_pd(y + i * 8 + 6, y1_d);
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.8854 cycles
+Segmentation fault
 <<<
-
+WA
 ================================

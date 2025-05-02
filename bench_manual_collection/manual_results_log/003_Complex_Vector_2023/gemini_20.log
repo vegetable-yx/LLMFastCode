@@ -17,60 +17,229 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 ```
 #include <immintrin.h>
+#include <math.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
 
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
 
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, int n)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include <algorithm>
+#include <cmath>
 
+void max_performance(double *__restrict x, double *__restrict y, int n) {
+    const int step = 4;
+    for (int i = 0; i < n; i += step) {
+        __m256d y_vec = _mm256_loadu_pd(y + i);
+        __m256d real_vec = _mm256_loadu_pd(x + 2 * i);
+        __m256d imag_vec = _mm256_loadu_pd(x + 2 * i + 1);
+
+        __m256d real_sqr_vec = _mm256_mul_pd(real_vec, real_vec);
+        __m256d imag_sqr_vec = _mm256_mul_pd(imag_vec, imag_vec);
+        __m256d real_imag_vec = _mm256_mul_pd(real_vec, imag_vec);
+        __m256d two_vec = _mm256_set1_pd(2.0);
+        __m256d two_real_imag_vec = _mm256_mul_pd(two_vec, real_imag_vec);
+
+        __m256d real_sqr_minus_imag_sqr_vec = _mm256_sub_pd(real_sqr_vec, imag_sqr_vec);
+
+        __m256d k_vec = _mm256_mul_pd(_mm256_loadu_pd(y + i), _mm256_set1_pd(4.0));
+        __m256d k_vec_floored = _mm256_floor_pd(k_vec);
+
+        for (int j = 0; j < step; ++j) {
+            int k = (int)k_vec_floored.m256d_f64[j];
+            double &current_y = y[i + j];
+
+            switch (k) {
+                case 0:
+                    current_y += std::fmin(real_sqr_minus_imag_sqr_vec.m256d_f64[j], two_real_imag_vec.m256d_f64[j]);
+                    break;
+                case 1:
+                    current_y += std::fmax(real_sqr_minus_imag_sqr_vec.m256d_f64[j], two_real_imag_vec.m256d_f64[j]);
+                    break;
+                default:
+                    current_y += real_sqr_vec.m256d_f64[j] + imag_sqr_vec.m256d_f64[j];
+                    break;
+            }
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    int i;
+    __m256d y_v, real_v, imag_v, real_sqr_v, imag_sqr_v, four_v, one_v, zero_v;
+    four_v = _mm256_set1_pd(4.0);
+    one_v = _mm256_set1_pd(1.0);
+    zero_v = _mm256_setzero_pd();
+
+    for (i = 0; i <= n - 4; i += 4) {
+        // Load y values
+        y_v = _mm256_loadu_pd(y + i);
+
+        // Load complex numbers
+        real_v = _mm256_loadu_pd(x + 2 * i);
+        imag_v = _mm256_loadu_pd(x + 2 * i + 1);
+
+        // Calculate real_sqr = real^2 - imag^2 and imag_sqr = 2 * real * imag
+        real_sqr_v = _mm256_fmsub_pd(real_v, real_v, _mm256_mul_pd(imag_v, imag_v)); // real^2 - imag^2
+        imag_sqr_v = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(real_v, imag_v)); // 2 * real * imag
+
+        // Calculate k = floor(4.0 * y[i]) for this chunk
+        __m256d k_v = _mm256_floor_pd(_mm256_mul_pd(four_v, y_v));
+        
+        //Case 0: y[i] += fmin(real_sqr, imag_sqr)
+        __m256d result0 = _mm256_min_pd(real_sqr_v, imag_sqr_v);
+        __m256d mask0 = _mm256_cmp_pd(k_v, zero_v, _CMP_EQ_OQ);
+        y_v = _mm256_blendv_pd(y_v, _mm256_add_pd(y_v, result0), mask0);
+
+        //Case 1: y[i] += fmax(real_sqr, imag_sqr)
+        __m256d result1 = _mm256_max_pd(real_sqr_v, imag_sqr_v);
+        __m256d mask1 = _mm256_cmp_pd(k_v, one_v, _CMP_EQ_OQ);
+        y_v = _mm256_blendv_pd(y_v, _mm256_add_pd(y_v, result1), mask1);
+
+        //Default: y[i] += real * real + imag * imag
+        __m256d result_default = _mm256_add_pd(_mm256_mul_pd(real_v, real_v), _mm256_mul_pd(imag_v, imag_v));
+        __m256d mask_default = _mm256_or_pd(_mm256_cmp_pd(k_v, _mm256_set1_pd(2.0), _CMP_GE_OQ), _mm256_cmp_pd(k_v, _mm256_set1_pd(2.0), _CMP_GE_OQ));
+        y_v = _mm256_blendv_pd(y_v, _mm256_add_pd(y_v, result_default), mask_default);
+
+        _mm256_storeu_pd(y + i, y_v);
+    }
+
+    // Handle remaining elements
+    for (; i < n; i++) {
+        unsigned int k = floor(4.0 * y[i]);
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+        switch (k) {
+            case 0:
+                y[i] += fmin(real_sqr, imag_sqr);
+                break;
+            case 1:
+                y[i] += fmax(real_sqr, imag_sqr);
+                break;
+            default:
+                y[i] += real * real + imag * imag;
+                break;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+6771.35 cycles
+
+Running: max_performance
+1471.77 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    int i = 0;
+    for (; i + 3 < n; i += 4)
+    {
+        __m256d y_vec = _mm256_loadu_pd(y + i);
+        __m256d x_real_vec = _mm256_loadu_pd(x + 2 * i);
+        __m256d x_imag_vec = _mm256_loadu_pd(x + 2 * i + 1);
+
+        __m256d real_sqr_vec = _mm256_fmsub_pd(x_real_vec, x_real_vec, _mm256_mul_pd(x_imag_vec, x_imag_vec));
+        __m256d imag_sqr_vec = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(x_real_vec, x_imag_vec));
+
+        __m256d mask_0 = _mm256_castsi256_pd(_mm256_cmpeq_epi64(_mm256_castpd_si256(_mm256_mul_pd(_mm256_set1_pd(4.0), y_vec)), _mm256_setzero_si256()));
+        __m256d mask_1 = _mm256_castsi256_pd(_mm256_cmpeq_epi64(_mm256_castpd_si256(_mm256_mul_pd(_mm256_set1_pd(4.0), y_vec)), _mm256_set1_epi64x(1)));
+        __m256d mask_default = _mm256_xor_pd(_mm256_xor_pd(mask_0, _mm256_set1_pd(-0.0)), _mm256_xor_pd(mask_1, _mm256_set1_pd(-0.0)));
+
+        __m256d min_vec = _mm256_min_pd(real_sqr_vec, imag_sqr_vec);
+        __m256d max_vec = _mm256_max_pd(real_sqr_vec, imag_sqr_vec);
+        __m256d sum_sqr_vec = _mm256_add_pd(_mm256_mul_pd(x_real_vec, x_real_vec), _mm256_mul_pd(x_imag_vec, x_imag_vec));
+
+        y_vec = _mm256_add_pd(y_vec, _mm256_blendv_pd(_mm256_blendv_pd(min_vec, max_vec, mask_1), sum_sqr_vec, mask_default));
+        _mm256_storeu_pd(y + i, y_vec);
+    }
+
+    for (; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
+
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+6591.19 cycles
+
+Running: max_performance
+993.639 cycles
 <<<
-
+WA
 ================================

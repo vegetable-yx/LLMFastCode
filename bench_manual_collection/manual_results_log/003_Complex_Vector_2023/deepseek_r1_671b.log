@@ -17,60 +17,193 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 ```
 #include <immintrin.h>
+#include <math.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
 
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
 
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, int n)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, int n) {
+    for (int i = 0; i < n; i += 4) {
+        __m256d y_vec = _mm256_loadu_pd(y + i);
+        __m256d scaled_y = _mm256_mul_pd(y_vec, _mm256_set1_pd(4.0));
+        __m256d k_floor = _mm256_floor_pd(scaled_y);
+
+        __m256d mask0 = _mm256_cmp_pd(k_floor, _mm256_set1_pd(0.0), _CMP_EQ_OQ);
+        __m256d mask1 = _mm256_cmp_pd(k_floor, _mm256_set1_pd(1.0), _CMP_EQ_OQ);
+        __m256d mask_def = _mm256_cmp_pd(k_floor, _mm256_set1_pd(2.0), _CMP_GE_OQ);
+
+        double* x_base = x + 2 * i;
+        __m256i real_offs = _mm256_set_epi64x(48, 32, 16, 0);
+        __m256d real = _mm256_i64gather_pd(x_base, real_offs, 1);
+        __m256i imag_offs = _mm256_set_epi64x(56, 40, 24, 8);
+        __m256d imag = _mm256_i64gather_pd(x_base, imag_offs, 1);
+
+        __m256d real_sq = _mm256_mul_pd(real, real);
+        __m256d imag_sq = _mm256_mul_pd(imag, imag);
+        __m256d real_sqr = _mm256_sub_pd(real_sq, imag_sq);
+        __m256d imag_sqr = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(real, imag));
+
+        __m256d case0 = _mm256_min_pd(real_sqr, imag_sqr);
+        __m256d case1 = _mm256_max_pd(real_sqr, imag_sqr);
+        __m256d def = _mm256_add_pd(real_sq, imag_sq);
+
+        __m256d res = _mm256_blendv_pd(_mm256_blendv_pd(case0, case1, mask1), def, mask_def);
+        _mm256_storeu_pd(y + i, _mm256_add_pd(y_vec, res));
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+6687.29 cycles
+
+Running: max_performance
+4222.98 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, int n) {
+    for (int j = 0; j < n; j += 4) {
+        __m256d y_vec = _mm256_loadu_pd(y + j);
+        __m256d scaled = _mm256_mul_pd(y_vec, _mm256_set1_pd(4.0));
+        __m256d floored = _mm256_floor_pd(scaled);
+        __m128i k_32 = _mm256_cvttpd_epi32(floored);
+
+        long long base = 2 * j;
+        __m256i real_indices = _mm256_set_epi64x(base + 6, base + 4, base + 2, base);
+        __m256d real = _mm256_i64gather_pd(x, real_indices, 8);
+        real = _mm256_permute4x64_pd(real, 0x1B);
+
+        __m256i imag_indices = _mm256_set_epi64x(base + 7, base + 5, base + 3, base + 1);
+        __m256d imag = _mm256_i64gather_pd(x, imag_indices, 8);
+        imag = _mm256_permute4x64_pd(imag, 0x1B);
+
+        __m256d real_sq = _mm256_mul_pd(real, real);
+        __m256d imag_sq = _mm256_mul_pd(imag, imag);
+        __m256d real_sqr = _mm256_sub_pd(real_sq, imag_sq);
+        __m256d sum_sqr = _mm256_add_pd(real_sq, imag_sq);
+        __m256d real_imag = _mm256_mul_pd(real, imag);
+        __m256d imag_sqr = _mm256_add_pd(real_imag, real_imag);
+
+        __m256d min_val = _mm256_min_pd(real_sqr, imag_sqr);
+        __m256d max_val = _mm256_max_pd(real_sqr, imag_sqr);
+
+        __m256i k_64 = _mm256_cvtepu32_epi64(k_32);
+        __m256i k0_mask = _mm256_cmpeq_epi64(k_64, _mm256_setzero_si256());
+        __m256i k1_mask = _mm256_cmpeq_epi64(k_64, _mm256_set1_epi64x(1));
+
+        __m256d addend = _mm256_blendv_pd(sum_sqr, max_val, _mm256_castsi256_pd(k1_mask));
+        addend = _mm256_blendv_pd(addend, min_val, _mm256_castsi256_pd(k0_mask));
+
+        y_vec = _mm256_add_pd(y_vec, addend);
+        _mm256_storeu_pd(y + j, y_vec);
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+7063.47 cycles
+
+Running: max_performance
+2957.66 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i += 4) {
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d y_scaled = _mm256_mul_pd(y_vec, _mm256_set1_pd(4.0));
+        __m128i k_vec = _mm256_cvttpd_epi32(y_scaled);
+
+        int base = 2 * i;
+        __m128i real_indices = _mm_set_epi32(base + 6, base + 4, base + 2, base);
+        __m128i imag_indices = _mm_set_epi32(base + 7, base + 5, base + 3, base + 1);
+
+        __m256d real = _mm256_i32gather_pd(x, real_indices, 8);
+        __m256d imag = _mm256_i32gather_pd(x, imag_indices, 8);
+
+        __m256d real2 = _mm256_mul_pd(real, real);
+        __m256d imag2 = _mm256_mul_pd(imag, imag);
+        __m256d real_sqr = _mm256_sub_pd(real2, imag2);
+        __m256d imag_sqr = _mm256_mul_pd(_mm256_mul_pd(real, imag), _mm256_set1_pd(2.0));
+        __m256d sum_squares = _mm256_add_pd(real2, imag2);
+
+        __m256d min_val = _mm256_min_pd(real_sqr, imag_sqr);
+        __m256d max_val = _mm256_max_pd(real_sqr, imag_sqr);
+
+        __m128i mask0_32 = _mm_cmpeq_epi32(k_vec, _mm_set1_epi32(0));
+        __m256d case0_mask = _mm256_castsi256_pd(_mm256_cvtepi32_epi64(mask0_32));
+
+        __m128i mask1_32 = _mm_cmpeq_epi32(k_vec, _mm_set1_epi32(1));
+        __m256d case1_mask = _mm256_castsi256_pd(_mm256_cvtepi32_epi64(mask1_32));
+
+        __m256d combined = _mm256_or_pd(case0_mask, case1_mask);
+        __m256d default_mask = _mm256_xor_pd(combined, _mm256_castsi256_pd(_mm256_set1_epi64x(-1)));
+
+        __m256d temp = _mm256_blendv_pd(sum_squares, min_val, case0_mask);
+        __m256d contrib = _mm256_blendv_pd(temp, max_val, case1_mask);
+
+        _mm256_storeu_pd(&y[i], _mm256_add_pd(y_vec, contrib));
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+7278.27 cycles
+
+Running: max_performance
+2697.53 cycles
 <<<
-
+WA
 ================================

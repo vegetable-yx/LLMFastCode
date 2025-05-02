@@ -19,58 +19,156 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
             }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; ++i) {
+        for (int j = 0; j < ON; ++j) {
+            double *y_ptr = &y[i * ON + j];
+            *y_ptr = 0.0;
+            for (int k0 = 0; k0 < K; ++k0) {
+                const int x_row = i + k0;
+                const double C = (double)(i + j + k0 - 1);
+                const int h_row = k0;
+                const double *x_base = &x[x_row * N + j];
+                const double *h_base = &h[h_row * K];
+
+                for (int k1 = 0; k1 <= K - 4; k1 += 4) {
+                    __m256d h_vec = _mm256_loadu_pd(&h_base[k1]);
+                    __m256d x_vec = _mm256_loadu_pd(&x_base[k1]);
+                    __m256d x_abs = _mm256_absd(x_vec);
+                    __m256d coeff_vec = _mm256_set1_pd(C) + _mm256_set_pd(k1 + 3, k1 + 2, k1 + 1, k1);
+                    __m256d terms = _mm256_mul_pd(h_vec, x_abs);
+                    terms = _mm256_mul_pd(terms, coeff_vec);
+                    terms = _mm256_hadd_pd(terms, terms);
+                    terms = _mm256_hadd_pd(terms, terms);
+                    *y_ptr += _mm256_extract_f64(terms, 0);
+                }
+
+                for (int k1 = K - (K % 4); k1 < K; ++k1) {
+                    double h_val = h_base[k1];
+                    double x_val = x_base[k1];
+                    double abs_x = fabs(x_val);
+                    double coeff = C + (double)k1;
+                    *y_ptr += coeff * h_val * abs_x;
+                }
+            }
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; ++i) {
+        for (int j = 0; j < ON; ++j) {
+            double current_sum = 0.0;
+            for (int k0 = 0; k0 < K; ++k0) {
+                int k1 = 0;
+                for (; k1 <= K - 4; k1 += 4) {
+                    __m256d h_vec = _mm_loadu_pd(h + k0 * K + k1);
+                    __m256d x_vec = _mm_loadu_pd(x + (i + k0) * N + j + k1);
+                    __m256d x_abs = _mm_fabsd(x_vec);
+                    double c = (double)(i + j + k0 - 1);
+                    __m256d coeff_vec = _mm_set_pd(c + k1 + 3, c + k1 + 2, c + k1 + 1, c + k1);
+                    __m256d term = _mm_mul_pd(_mm_mul_pd(h_vec, x_abs), coeff_vec);
+                    __m256d sum_vec = _mm_hadd_pd(term, term);
+                    sum_vec = _mm_hadd_pd(sum_vec, _mm_shuffle_pd(sum_vec, sum_vec, _MM_SHUFFLE(2, 3, 0, 1)));
+                    current_sum += _mm_cvtsd_f64(sum_vec);
+                }
+                for (; k1 < K; ++k1) {
+                    double h_val = h[k0 * K + k1];
+                    double x_val = x[(i + k0) * N + j + k1];
+                    double coeff = (double)(i + j + k0 + k1 - 1);
+                    current_sum += h_val * fabs(x_val) * coeff;
+                }
+            }
+            y[i * ON + j] = current_sum;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    const __m256d offset_vec = _mm256_setr_pd(0.0, 1.0, 2.0, 3.0);
+    for (int i = 0; i < ON; ++i) {
+        for (int j = 0; j < ON; ++j) {
+            double acc = 0.0;
+            for (int k0 = 0; k0 < K; ++k0) {
+                const double* h_row = h + k0 * K;
+                const int x_row = i + k0;
+                const double* x_ptr = x + x_row * N + j;
+                int k1 = 0;
+                for (; k1 <= K - 4; k1 += 4) {
+                    __m256d h_vec = _mm256_load_pd(h_row + k1);
+                    __m256d x_vec = _mm256_load_pd(x_ptr + k1);
+                    __m256d x_abs = _mm256_abs_pd(x_vec);
+                    double c0 = (double)(i + j + k0 + k1 - 1);
+                    __m256d coeff = _mm256_add_pd(_mm256_set1_pd(c0), offset_vec);
+                    __m256d term = _mm256_mul_pd(h_vec, x_abs);
+                    term = _mm256_mul_pd(term, coeff);
+                    term = _mm256_hadd_pd(term, term);
+                    term = _mm256_hadd_pd(term, term);
+                    acc += _mm256_extract_f64x2(term, 0);
+                }
+                for (; k1 < K; ++k1) {
+                    double h_val = h_row[k1];
+                    double x_val = x_ptr[k1];
+                    double x_abs = fabs(x_val);
+                    double coeff = (double)(i + j + k0 + k1 - 1);
+                    acc += coeff * h_val * x_abs;
+                }
+            }
+            y[i * ON + j] = acc;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

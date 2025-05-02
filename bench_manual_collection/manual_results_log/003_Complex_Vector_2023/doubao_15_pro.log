@@ -17,60 +17,185 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 ```
 #include <immintrin.h>
+#include <math.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void slow_performance(double *__restrict x, double *__restrict y, int n)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+    for (int i = 0; i < n; i++)
+    {
+        unsigned int k = floor(4.0 * y[i]);
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
 
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
 
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+        switch (k)
+        {
+        case 0:
+            y[i] += fmin(real_sqr, imag_sqr);
+            break;
+        case 1:
+            y[i] += fmax(real_sqr, imag_sqr);
+            break;
+        default:
+            y[i] += real * real + imag * imag;
+            break;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, int n)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    for (int i = 0; i < n; i += 8) {
+        __m256d real = _mm256_loadu_pd(x + 2 * i);
+        __m256d imag = _mm256_loadu_pd(x + 2 * i + 1);
+        __m256d y_chunk = _mm256_loadu_pd(y + i);
+
+        __m256d real_sqr = _mm256_sub_pd(
+            _mm256_mul_pd(real, real),
+            _mm256_mul_pd(imag, imag)
+        );
+        __m256d imag_sqr = _mm256_mul_pd(
+            _mm256_set1_pd(2.0),
+            _mm256_mul_pd(real, imag)
+        );
+
+
+        __m256i k_chunk = _mm256_cv_pd_epi32(_mm256_mul_pd(_mm256_set1_pd(4.0), y_chunk));
+
+
+        __m256d mask0 = _mm256_cmp_epi32_mask(k_chunk, _mm256_set1_epi32(0), _MM_CMPINT_EQ);
+        __m256d mask1 = _mm256_cmp_epi32_mask(k_chunk, _mm256_set1_epi32(1), _MM_CMPINT_EQ);
+
+
+        __m256d result0 = _mm256_add_pd(y_chunk, _mm256_min_pd(real_sqr, imag_sqr));
+        __m256d result1 = _mm256_add_pd(y_chunk, _mm256_max_pd(real_sqr, imag_sqr));
+        __m256d result2 = _mm256_add_pd(y_chunk, _mm256_add_pd(real_sqr, imag_sqr));
+
+
+        __m256d final_result = _mm256_blendv_pd(result2, _mm256_blendv_pd(result1, result0, mask0), mask1);
+
+
+        _mm256_storeu_pd(y + i, final_result);
+    }
+    for (int i = n - n % 8; i < n; i++) {
+        unsigned int k = floor(4.0 * y[i]);
+
+        double real = x[2 * i];
+        double imag = x[2 * i + 1];
+
+        double real_sqr = real * real - imag * imag;
+        double imag_sqr = 2.0 * real * imag;
+
+        switch (k) {
+            case 0:
+                y[i] += fmin(real_sqr, imag_sqr);
+                break;
+            case 1:
+                y[i] += fmax(real_sqr, imag_sqr);
+                break;
+            default:
+                y[i] += real * real + imag * imag;
+                break;
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    const __m256d four = _mm256_set1_pd(4.0);
+    const __m256i zero = _mm256_set1_epi32(0);
+    const __m256i one = _mm256_set1_epi32(1);
+
+    for (int i = 0; i < n; i += 4) {
+        __m256d y_chunk = _mm256_loadu_pd(&y[i]);
+        __m256d y_times_four = _mm256_mul_pd(y_chunk, four);
+        __m256i k_chunk = _mm256_cvttpd_epi32(y_times_four);
+
+        __m256d real_chunk = _mm256_loadu_pd(&x[2 * i]);
+        __m256d imag_chunk = _mm256_loadu_pd(&x[2 * i + 1]);
+
+        __m256d real_sqr_chunk = _mm256_mul_pd(real_chunk, real_chunk);
+        __m256d imag_sqr_chunk = _mm256_mul_pd(imag_chunk, imag_chunk);
+        __m256d real_imag_double_chunk = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(real_chunk, imag_chunk));
+
+        __m256d add_chunk = _mm256_permute2f128_pd(real_sqr_chunk, real_sqr_chunk, 0);
+        __m256d cmp_fmin_chunk = _mm256_min_pd(real_sqr_chunk, real_imag_double_chunk);
+        __m256d cmp_fmax_chunk = _mm256_max_pd(real_sqr_chunk, real_imag_double_chunk);
+
+        __m256d final_chunk = _mm256_permute2f128_pd(add_chunk, add_chunk, 0);
+        final_chunk = _mm256_blendv_pd(final_chunk, cmp_fmin_chunk, _mm256_cmpeq_epi32(k_chunk, zero));
+        final_chunk = _mm256_blendv_pd(final_chunk, cmp_fmax_chunk, _mm256_cmpeq_epi32(k_chunk, one));
+
+        y_chunk = _mm256_add_pd(y_chunk, final_chunk);
+        _mm256_storeu_pd(&y[i], y_chunk);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
 
+// Precondition : 0 <= y[i] < 1.0, n = 1024
+void max_performance(double *__restrict x, double *__restrict y, int n)
+{
+    __m256d four = _mm256_set1_pd(4.0);
+    __m256d two = _mm256_set1_pd(2.0);
+
+    for (size_t i = 0; i < n; i += 4) {
+        __m256d y_vec = _mm256_loadu_pd(&y[i]);
+        __m256d x_real = _mm256_loadu_pd(&x[2 * i]);
+        __m256d x_imag = _mm256_loadu_pd(&x[2 * i + 1]);
+
+        __m256d k_floor = _mm256_floor_pd(_mm256_mul_pd(y_vec, four));
+
+        __m256d real_sqr = _mm256_sub_pd(_mm256_mul_pd(x_real, x_real), _mm256_mul_pd(x_imag, x_imag));
+        __m256d imag_sqr = _mm256_mul_pd(two, _mm256_mul_pd(x_real, x_imag));
+
+        __m256i k_cmp = _mm256_cmp_pd(k_floor, _mm256_set1_pd(1.0), _CMP_LT_OQ);
+        __m256d fmin_res = _mm256_min_pd(real_sqr, imag_sqr);
+
+        __m256d result = _mm256_blendv_pd(fmin_res, _mm256_max_pd(real_sqr, imag_sqr), k_cmp);
+
+        k_cmp = _mm256_cmp_pd(k_floor, _mm256_set1_pd(2.0), _CMP_LT_OQ);
+        __m256d real_imag_sqr_sum = _mm256_add_pd(real_sqr, imag_sqr);
+        result = _mm256_blendv_pd(result, real_imag_sqr_sum, k_cmp);
+
+        y_vec = _mm256_add_pd(y_vec, result);
+        _mm256_storeu_pd(&y[i], y_vec);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

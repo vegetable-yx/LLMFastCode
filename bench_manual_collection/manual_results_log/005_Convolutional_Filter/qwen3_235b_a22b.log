@@ -19,58 +19,193 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
             }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffff));
+
+    for (int k0 = 0; k0 < K; ++k0) {
+        for (int k1 = 0; k1 < K; ++k1) {
+            const double hk = h[k0 * K + k1];
+            if (hk == 0.0) continue;
+
+            const double offset = k0 + k1 - 1.0;
+
+            for (int i = 0; i < ON; ++i) {
+                const double i_val = (double)i;
+                const int a = i + k0;
+                const double* x_base = &x[a * N + k1];
+                double* y_base = &y[i * ON];
+
+                int j = 0;
+                for (; j + 3 < ON; j += 4) {
+                    __m256d v_j = _mm256_setr_pd(j, j + 1, j + 2, j + 3);
+                    __m256d v_ij = _mm256_add_pd(_mm256_set1_pd(i_val), v_j);
+                    __m256d v_ij_offset = _mm256_add_pd(v_ij, _mm256_set1_pd(offset));
+                    
+                    __m256d v_x = _mm256_loadu_pd(x_base + j);
+                    __m256d v_abs_x = _mm256_andnot_pd(sign_mask, v_x);
+                    
+                    __m256d v_term = _mm256_mul_pd(_mm256_set1_pd(hk), v_ij_offset);
+                    __m256d v_total = _mm256_mul_pd(v_term, v_abs_x);
+                    
+                    __m256d v_y = _mm256_load_pd(y_base + j);
+                    v_y = _mm256_add_pd(v_y, v_total);
+                    _mm256_store_pd(y_base + j, v_y);
+                }
+
+                for (; j < ON; ++j) {
+                    double x_val = x_base[j];
+                    double abs_x = x_val < 0.0 ? -x_val : x_val;
+                    double term = hk * (i + j + k0 + k1 - 1.0) * abs_x;
+                    y_base[j] += term;
+                }
+            }
+        }
+    }
+}
 >>>
-
+Starting program. 2 functions registered.
+Segmentation fault
 <<<
-
+WA
 ================================
-
+#include <immintrin.h>
+#include "common.h"
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+const int ON = N - K + 1;
+if (ON <= 0) return;
+double* Y1 = static_cast<double*>(_mm_malloc(ON * ON * sizeof(double), 32));
+double* Y2 = static_cast<double*>(_mm_malloc(ON * ON * sizeof(double), 32));
+if (!Y1 || !Y2) {
+_mm_free(Y1);
+_mm_free(Y2);
+return;
+}
+const size_t y_size = static_cast<size_t>(ON) * ON * sizeof(double);
+std::memset(Y1, 0, y_size);
+std::memset(Y2, 0, y_size);
+const __m256i abs_mask = _mm256_set1_epi64x(0x7FFFFFFFFFFFFFFF);
+for (int k0 = 0; k0 < K; ++k0) {
+for (int k1 = 0; k1 < K; ++k1) {
+const double h_val = GET_H(k0, k1);
+if (h_val == 0.0) continue;
+const double k0k1_sum = k0 + k1;
+const double h_val_k0k1 = h_val * k0k1_sum;
+for (int i = 0; i < ON; ++i) {
+const double* x_row = x + (i + k0) * N + k1;
+double* y1_row = Y1 + i * ON;
+double* y2_row = Y2 + i * ON;
+int j = 0;
+for (; j <= ON - 4; j += 4) {
+__m256d x_vec = _mm256_loadu_pd(x_row + j);
+__m256d x_abs = _mm256_and_pd(x_vec, _mm256_castsi256_pd(abs_mask));
+__m256d y1_vec = _mm256_load_pd(y1_row + j);
+__m256d y2_vec = _mm256_load_pd(y2_row + j);
+__m256d h1_vec = _mm256_set1_pd(h_val);
+__m256d h2_vec = _mm256_set1_pd(h_val_k0k1);
+y1_vec = _mm256_fmadd_pd(h1_vec, x_abs, y1_vec);
+y2_vec = _mm256_fmadd_pd(h2_vec, x_abs, y2_vec);
+_mm256_store_pd(y1_row + j, y1_vec);
+_mm256_store_pd(y2_row + j, y2_vec);
+}
+for (; j < ON; ++j) {
+const double x_val = fabs(x_row[j]);
+y1_row[j] += h_val * x_val;
+y2_row[j] += h_val_k0k1 * x_val;
+}
+}
+}
+}
+for (int i = 0; i < ON; ++i) {
+const double i_double = i;
+const double* y1_row = Y1 + i * ON;
+const double* y2_row = Y2 + i * ON;
+double* y_row = y + i * ON;
+for (int j = 0; j < ON; ++j) {
+const double ij = i_double + j - 1.0;
+y_row[j] = ij * y1_row[j] + y2_row[j];
+}
+}
+_mm_free(Y1);
+_mm_free(Y2);
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
+#include <cmath>
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                const double hk0 = GET_H(k0, 0);
+                const double hk1 = GET_H(k0, 1);
+
+                double abs_x_ik0_j = std::fabs(GET_X(i + k0, j));
+                sum += (i + j + k0 - 1) * hk0 * abs_x_ik0_j;
+                double abs_x_ik0_j_plus_1 = std::fabs(GET_X(i + k0, j + 1));
+                sum += (i + j + k0) * hk1 * abs_x_ik0_j_plus_1;
+                
+                if(K > 2){
+                    const double hk2 = GET_H(k0, 2);
+                    double abs_x_ik0_j_plus_2 = std::fabs(GET_X(i + k0, j + 2));
+                    sum += (i + j + k0+1) * hk2 * abs_x_ik0_j_plus_2;
+                }
+            }
+            GET_Y(i, j) = sum;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+72295.2 cycles
+
+Running: max_performance
+52103.6 cycles
 <<<
-
+WA
 ================================

@@ -16,61 +16,154 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 
 ```
-#include <immintrin.h>
-#include "common.h"
-
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
 
+void maxperformance(double *__restrict x, double *__restrict y)
+{
+    __m256d real_row[4], im_row[4];
+    for (int j = 0; j < 4; ++j) {
+        const double* row_x = &x[j * 8];
+        real_row[j] = _mm256_set_pd(row_x[6], row_x[4], row_x[2], row_x[0]);
+        im_row[j] = _mm256_set_pd(row_x[7], row_x[5], row_x[3], row_x[1]);
+    }
+
+    __m256d tmp0, tmp1, tmp2, tmp3;
+    tmp0 = _mm256_unpacklo_pd(real_row[0], real_row[1]);
+    tmp1 = _mm256_unpackhi_pd(real_row[0], real_row[1]);
+    tmp2 = _mm256_unpacklo_pd(real_row[2], real_row[3]);
+    tmp3 = _mm256_unpackhi_pd(real_row[2], real_row[3]);
+
+    __m256d real_t[4];
+    real_t[0] = _mm256_permute2f128_pd(tmp0, tmp2, 0x20);
+    real_t[1] = _mm256_permute2f128_pd(tmp0, tmp2, 0x31);
+    real_t[2] = _mm256_permute2f128_pd(tmp1, tmp3, 0x20);
+    real_t[3] = _mm256_permute2f128_pd(tmp1, tmp3, 0x31);
+
+    tmp0 = _mm256_unpacklo_pd(im_row[0], im_row[1]);
+    tmp1 = _mm256_unpackhi_pd(im_row[0], im_row[1]);
+    tmp2 = _mm256_unpacklo_pd(im_row[2], im_row[3]);
+    tmp3 = _mm256_unpackhi_pd(im_row[2], im_row[3]);
+
+    __m256d im_t[4];
+    im_t[0] = _mm256_permute2f128_pd(tmp0, tmp2, 0x20);
+    im_t[1] = _mm256_permute2f128_pd(tmp0, tmp2, 0x31);
+    im_t[2] = _mm256_permute2f128_pd(tmp1, tmp3, 0x20);
+    im_t[3] = _mm256_permute2f128_pd(tmp1, tmp3, 0x31);
+
+    const __m256d mask = _mm256_set1_pd(-0.0);
+    im_t[0] = _mm256_xor_pd(im_t[0], mask);
+    im_t[1] = _mm256_xor_pd(im_t[1], mask);
+    im_t[2] = _mm256_xor_pd(im_t[2], mask);
+    im_t[3] = _mm256_xor_pd(im_t[3], mask);
+
+    for(int i=0; i<4; ++i) {
+        __m256d low = _mm256_unpacklo_pd(real_t[i], im_t[i]);
+        __m256d high = _mm256_unpackhi_pd(real_t[i], im_t[i]);
+        _mm256_storeu_pd(&y[i*8], low);
+        _mm256_storeu_pd(&y[i*8+4], high);
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.4904 cycles
+
+Running: max_performance
+17.5101 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        __m256d x0 = _mm256_loadu_pd(x + i * 2);
+        __m256d x1 = _mm256_loadu_pd(x + i * 2 + 8);
+        __m256d x2 = _mm256_loadu_pd(x + i * 2 + 16);
+        __m256d x3 = _mm256_loadu_pd(x + i * 2 + 24);
+
+        __m256d y0_a  = _mm256_permute2f128_pd(x0, x2, 0x20);
+        __m256d y0_b  = _mm256_permute2f128_pd(x1, x3, 0x20);
+        __m256d y1_a =  _mm256_permute2f128_pd(x0, x2, 0x31);
+        __m256d y1_b = _mm256_permute2f128_pd(x1, x3, 0x31);
+        
+        __m256d y0_c = _mm256_unpacklo_pd(y0_a, y0_b);
+        __m256d y0_d = _mm256_unpackhi_pd(y0_a, y0_b);
+        __m256d y1_c = _mm256_unpacklo_pd(y1_a, y1_b);
+        __m256d y1_d = _mm256_unpackhi_pd(y1_a, y1_b);
+
+        __m256d neg_mask = _mm256_set_pd(1.0, -1.0, 1.0, -1.0);
+        y1_c = _mm256_mul_pd(y1_c, neg_mask);
+        y1_d = _mm256_mul_pd(y1_d, neg_mask);
+
+
+        _mm256_storeu_pd(y + i * 8, y0_c);
+        _mm256_storeu_pd(y + i * 8 + 4, y0_d);
+        _mm256_storeu_pd(y + i * 8 + 2, y1_c);
+        _mm256_storeu_pd(y + i * 8 + 6, y1_d);
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.5768 cycles
+Segmentation fault
 <<<
-
+WA
 ================================
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    for (int j = 0; j < 4; ++j) {
+        double *xj = x + j * 8;
+        // Real parts directly from even indices, negatives of imaginary parts from odd indices
+        const double r0 = xj[0], i0 = -xj[1];
+        const double r1 = xj[2], i1 = -xj[3];
+        const double r2 = xj[4], i2 = -xj[5];
+        const double r3 = xj[6], i3 = -xj[7];
 
+        // Base pointer for the current j-th complex column in y
+        double *base_y = y + j * 2;
+        
+        // Write transposed rows for i = 0 to 3 (explicit unrolling)
+        base_y[0*8 + 0] = r0; base_y[0*8 + 1] = i0;
+        base_y[1*8 + 0] = r1; base_y[1*8 + 1] = i1;
+        base_y[2*8 + 0] = r2; base_y[2*8 + 1] = i2;
+        base_y[3*8 + 0] = r3; base_y[3*8 + 1] = i3;
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance1
+26.6177 cycles
+
+Running: max_performance
+20.3901 cycles
 <<<
-
+26.6177 / 20.3901 = 1.30542273
 ================================

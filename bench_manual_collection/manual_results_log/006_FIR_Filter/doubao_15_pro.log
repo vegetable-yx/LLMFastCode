@@ -19,58 +19,136 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// Precondition: n = 1024, m = 4
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (int k = 0; k < m; ++k)
+        {
+            int x_index = i + (m - 1) - k;
+            sum += (i + k + 1) * h[k] * std::abs(x[x_index]);
         }
+        y[i] = sum;
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+// Precondition: n = 1024, m = 4
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    __m256d h_vec = _mm256_loadu_pd(h);
+    for (int i = 0; i < n; ++i)
+    {
+        __m256d indices = _mm256_setr_pd(i + 3., i + 2., i + 1., i);
+        __m256d x_indices_vec = _mm256_setr_pd(x[i + 3], x[i + 2], x[i + 1], x[i]);
+        x_indices_vec = _mm256_abs_pd(x_indices_vec);
+        __m256d mul1 = _mm256_mul_pd(indices, h_vec);
+        __m256d mul2 = _mm256_mul_pd(mul1, x_indices_vec);
+        __m128d lo = _mm256_castpd256_pd128(mul2);
+        __m128d hi = _mm256_extractf128_pd(mul2, 1);
+        lo = _mm_add_pd(lo, hi);
+        double sum = _mm_cvtsd_f64(_mm_hadd_pd(lo, lo));
+        y[i] = sum;
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+// Precondition: n = 1024, m = 4
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m) {
+    __m256d h0h1 = _mm256_set_pd(h[1], h[0]);
+    __m256d h2h3 = _mm256_set_pd(h[3], h[2]);
+    for (int i = 0; i < n; i += 4) {
+        __m256d i_vec = _mm256_set1_pd((double)i);
+        __m256d sum0 = _mm256_setzero_pd();
+        __m256d sum1 = _mm256_setzero_pd();
+        for (int k = 0; k < m; ++k) {
+            int x_index = i + (m - 1) - k;
+            __m256d x_vec = _mm256_loadu_pd(&x[x_index]);
+            __m256d abs_x = _mm256_abs_pd(x_vec);
+            if (k < 2) {
+                __m256d factor = _mm256_add_pd(i_vec, _mm256_set1_pd((double)k+1.0));
+                sum0 = _mm256_mul_pd(sum0, factor);
+                sum0 = _mm256_fmadd_pd(factor, h0h1, sum0);
+            } else {
+                __m256d factor = _mm256_add_pd(i_vec, _mm256_set1_pd((double)k+1.0));
+                sum1 = _mm256_mul_pd(sum1, factor);
+                sum1 = _mm256_fmadd_pd(factor, h2h3, sum1);
+            }
+        }
+        __m256d sums = _mm256_add_pd(sum0, sum1);
+        _mm256_storeu_pd(&y[i], sums);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+// Precondition: n = 1024, m = 4
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    const __m256d zero = _mm256_setzero_pd();
+    const __m256i _2 = _mm256_set1_epi32(2);
+    const __m256i _3 = _mm256_set1_epi32(3);
+    const __m256i _4 = _mm256_set1_epi32(4);
+    const __m256d h0 = _mm256_set1_pd(h[0]);
+    const __m256d h1 = _mm256_set1_pd(h[1]);
+    const __m256d h2 = _mm256_set1_pd(h[2]);
+    const __m256d h3 = _mm256_set1_pd(h[3]);
+
+    for (int i = 0; i < n; i += 4)
+    {
+        __m256i indices0 = _mm256_add_epi32(_mm256_set_epi32(i + 3, i + 2, i + 1, i), _mm256_set_epi32(-3, -2, -1, 0));
+        __m256d x0 = _mm256_loadu_pd(x + indices0[0]);
+        __m256d x1 = _mm256_loadu_pd(x + indices0[1]);
+        __m256d x2 = _mm256_loadu_pd(x + indices0[2]);
+        __m256d x3 = _mm256_loadu_pd(x + indices0[3]);
+
+        __m256d abs_x0 = _mm256_abs_pd(x0);
+        __m256d abs_x1 = _mm256_abs_pd(x1);
+        __m256d abs_x2 = _mm256_abs_pd(x2);
+        __m256d abs_x3 = _mm256_abs_pd(x3);
+
+        __m256i multiplier0 = _mm256_add_epi32(_mm256_set_epi32(i + 1, i + 1, i + 1, i + 1), _mm256_set_epi32(0, 1, 2, 3));
+        __m256i multiplier1 = _mm256_add_epi32(_mm256_set_epi32(i + 1, i + 1, i + 1, i + 1), _mm256_set_epi32(1, 2, 3, 0));
+        __m256i multiplier2 = _mm256_add_epi32(_mm256_set_epi32(i + 1, i + 1, i + 1, i + 1), _mm256_set_epi32(2, 3, 0, 1));
+        __m256i multiplier3 = _mm256_add_epi32(_mm256_set_epi32(i + 1, i + 1, i + 1, i + 1), _mm256_set_epi32(3, 0, 1, 2));
+
+        __m256d mul0 = _mm256_mul_pd(_mm256_cvtepi32_pd(multiplier0), abs_x0);
+        __m256d mul1 = _mm256_mul_pd(_mm256_cvtepi32_pd(multiplier1), abs_x1);
+        __m256d mul2 = _mm256_mul_pd(_mm256_cvtepi32_pd(multiplier2), abs_x2);
+        __m256d mul3 = _mm256_mul_pd(_mm256_cvtepi32_pd(multiplier3), abs_x3);
+
+        __m256d sum0 = _mm256_fmadd_pd(h0, mul0, zero);
+        sum0 = _mm256_fmadd_pd(h1, mul1, sum0);
+        sum0 = _mm256_fmadd_pd(h2, mul2, sum0);
+        sum0 = _mm256_fmadd_pd(h3, mul3, sum0);
+
+        _mm256_storeu_pd(y + i, sum0);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

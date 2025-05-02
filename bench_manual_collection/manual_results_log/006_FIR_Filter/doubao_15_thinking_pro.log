@@ -19,58 +19,106 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// Precondition: n = 1024, m = 4
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (int k = 0; k < m; ++k)
+        {
+            int x_index = i + (m - 1) - k;
+            sum += (i + k + 1) * h[k] * std::abs(x[x_index]);
         }
+        y[i] = sum;
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    for (int i = 0; i < n; ++i) {
+        __m256d v_x = _mm256_loadu_pd(x + i);
+        __m256d v_abs = _mm256_absd(v_x);
+        
+        double c0 = (i + 1) * h[0];
+        double c1 = (i + 2) * h[1];
+        double c2 = (i + 3) * h[2];
+        double c3 = (i + 4) * h[3];
+        __m256d v_coeffs = _mm256_set_pd(c0, c1, c2, c3);
+        
+        __m256d v_product = _mm256_mulpd(v_abs, v_coeffs);
+        v_product = _mm256_hadd_pd(v_product, v_product);
+        v_product = _mm256_hadd_pd(v_product, v_product);
+        
+        y[i] = _mm_cvtsd_f64(v_product);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    for (int i = 0; i < n; ++i) {
+        __m256d x_vec = _mm256_loadu_pd(x + i);
+        __m256d reversed_x = _mm256_permute_pd(x_vec, 0xE8);
+        __m256d abs_x = _mm256_abs_pd(reversed_x);
+        __m256d h_vec = _mm256_loadu_pd(h);
+        double factors[4] = {(double)(i+1), (double)(i+2), (double)(i+3), (double)(i+4)};
+        __m256d factors_vec = _mm256_loadu_pd(factors);
+        __m256d terms = _mm256_mul_pd(h_vec, factors_vec);
+        terms = _mm256_mul_pd(terms, abs_x);
+        
+        __m128d sum_low = _mm256_castpd256_pd128(terms);
+        __m128d sum_high = _mm256_extractf128_pd(terms, 1);
+        sum_low = _mm_add_pd(sum_low, sum_high);
+        double sum = sum_low[0] + sum_low[1];
+        
+        y[i] = sum;
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m) {
+    double h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
+    for (int i = 0; i < n; ++i) {
+        __m256d v_x = _mm256_load_pd(x + i);
+        __m256d v_abs = _mm256_absd(v_x);
+        
+        double coeff3 = (i + 4) * h3;
+        double coeff2 = (i + 3) * h2;
+        double coeff1 = (i + 2) * h1;
+        double coeff0 = (i + 1) * h0;
+        __m256d v_coeff = _mm256_setr_pd(coeff3, coeff2, coeff1, coeff0);
+        
+        __m256d v_mul = _mm256_mul_pd(v_abs, v_coeff);
+        __m256d v_sum = _mm256_hadd_pd(v_mul, v_mul);
+        v_sum = _mm256_hadd_pd(v_sum, v_sum);
+        
+        y[i] = _mm256_extract_f64x1(v_sum, 0);
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================

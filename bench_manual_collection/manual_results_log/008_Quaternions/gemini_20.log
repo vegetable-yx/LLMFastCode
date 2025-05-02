@@ -19,37 +19,40 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
-{
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
 
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
 
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
 
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
 {
 }
 ```

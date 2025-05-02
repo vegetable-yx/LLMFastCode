@@ -19,58 +19,161 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
             }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+#define ALIGNED_DOUBLE __attribute__((aligned(32)))
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y) {
+    const int ON = N - K + 1;
+    ALIGNED_DOUBLE xmm_zero[4] = {0.0, 0.0, 0.0, 0.0};
+    __m256d zero = _mm256_loadu_pd(xmm_zero);
+
+    for (int i = 0; i < ON; i++) {
+        for (int j = 0; j < ON; j += 4) {
+            __m256d sum = zero;
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    double factor = (i + j + k0 + k1 - 1) * GET_H(k0, k1);
+                    __m256d xmm_x0 = _mm256_loadu_pd(&GET_X(i + k0, j + 0));
+                    __m256d xmm_x1 = _mm256_loadu_pd(&GET_X(i + k0, j + 1));
+                    __m256d xmm_x2 = _mm256_loadu_pd(&GET_X(i + k0, j + 2));
+                    __m256d xmm_x3 = _mm256_loadu_pd(&GET_X(i + k0, j + 3));
+                    __m256d xmm_abs0 = _mm256_and_pd(_mm256_loadu_pd(xmm_zero), _mm256_sub_pd(_mm256_max_pd(xmm_x0, _mm256_loadu_pd(xmm_zero)), _mm256_min_pd(xmm_x0, _mm256_loadu_pd(xmm_zero))));
+                    __m256d xmm_abs1 = _mm256_and_pd(_mm256_loadu_pd(xmm_zero), _mm256_sub_pd(_mm256_max_pd(xmm_x1, _mm256_loadu_pd(xmm_zero)), _mm256_min_pd(xmm_x1, _mm256_loadu_pd(xmm_zero))));
+                    __m256d xmm_abs2 = _mm256_and_pd(_mm256_loadu_pd(xmm_zero), _mm256_sub_pd(_mm256_max_pd(xmm_x2, _mm256_loadu_pd(xmm_zero)), _mm256_min_pd(xmm_x2, _mm256_loadu_pd(xmm_zero))));
+                    __m256d xmm_abs3 = _mm256_and_pd(_mm256_loadu_pd(xmm_zero), _mm256_sub_pd(_mm256_max_pd(xmm_x3, _mm256_loadu_pd(xmm_zero)), _mm256_min_pd(xmm_x3, _mm256_loadu_pd(xmm_zero)));
+                    __m256d xmm_fac = _mm256_set1_pd(factor);
+                    sum = _mm256_add_pd(sum, _mm256_mul_pd(xmm_fac, _mm256_add_pd(_mm256_add_pd(xmm_abs0, xmm_abs1), _mm256_add_pd(xmm_abs2, xmm_abs3))));
+                }
+            }
+            _mm256_storeu_pd(&GET_Y(i, j), sum);
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j += 4)
+        {
+            __m256d sum = zero;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    double factor = (i + j + k0 + k1 - 1) * GET_H(k0, k1);
+                    __m256d data = _mm256_loadu_pd(&GET_X(i + k0, j + k1));
+                    __m256d abs_data = _mm256_abs_pd(data);
+                    __m256d factor_vec = _mm256_set1_pd(factor);
+                    sum = _mm256_fmadd_pd(abs_data, factor_vec, sum);
+                }
+            }
+            _mm256_storeu_pd(&GET_Y(i, j), sum);
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    __m256d zero = _mm256_set1_pd(0.0);
+    for (int i = 0; i < ON; i += 4) {
+        for (int j = 0; j < ON; j ++) {
+            __m256d sum = zero;
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    __m256d factor1 = _mm256_set1_pd(i + j + k0 + k1 - 1);
+                    __m256d factor2 = _mm256_set1_pd(GET_H(k0, k1));
+                    __m256d val1, val2, val3;
+                    val1 = _mm256_loadu_pd(&GET_X(i + k0, j + k1));
+                    val2 = _mm256_loadu_pd(&GET_X(i + 1 + k0, j + k1));
+                    val3 = _mm256_loadu_pd(&GET_X(i + 2 + k0, j + k1));
+                    __m256d x4 = _mm256_loadu_pd(&GET_X(i + 3 + k0, j + k1));
+                    val1 = _mm256_andnot_pd(_mm256_cmp_pd(val1, zero, _CMP_LT_OS), val1);
+                    val2 = _mm256_andnot_pd(_mm256_cmp_pd(val2, zero, _CMP_LT_OS), val2);
+                    val3 = _mm256_andnot_pd(_mm256_cmp_pd(val3, zero, _CMP_LT_OS), val3);
+                    x4 = _mm256_andnot_pd(_mm256_cmp_pd(x4, zero, _CMP_LT_OS), x4);
+                    __m256d mul1 = _mm256_mul_pd(factor1, factor2);
+                    __m256d mul2 = _mm256_mul_pd(mul1, val1);
+                    __m256d mul3 = _mm256_mul_pd(mul1, val2);
+                    __m256d mul4 = _mm256_mul_pd(mul1, val3);
+                    __m256d mul5 = _mm256_mul_pd(mul1, x4);
+                    sum = _mm256_add_pd(sum, mul2);
+                    sum = _mm256_add_pd(sum, mul3);
+                    sum = _mm256_add_pd(sum, mul4);
+                    sum = _mm256_add_pd(sum, mul5);
+                }
+            }
+            double temp[4];
+            _mm256_storeu_pd(temp, sum);
+            for (int ii = 0; ii < 4; ii++) {
+                GET_Y(i + ii, j) = temp[ii];
+            }
+        }
+    }
+    for (int i = (ON / 4) * 4; i < ON; i++) {
+        for (int j = 0; j < ON; j++) {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    sum += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+            GET_Y(i, j) = sum;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance
+71340.5 cycles
+Segmentation fault
 <<<
-
+WA
 ================================

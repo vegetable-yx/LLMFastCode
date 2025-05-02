@@ -19,58 +19,141 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
-        }
+    const double _c[4] = {2.0, 5.0, 0.25, 0.75};
+    const double c0 = _c[0], c1 = _c[1], c2 = _c[2], c3 = _c[3];
+    for (size_t i = 0; i < N; ++i)
+    {
+        double *xi = &(x[i * 4]);
+        double a = c0 * xi[0] - c1 * xi[1] - c2 * xi[2] - c3 * xi[3];
+        double b = c0 * xi[1] + c1 * xi[0] + c2 * xi[3] - c3 * xi[2];
+        double c = c0 * xi[2] - c1 * xi[3] + c2 * xi[0] + c3 * xi[1];
+        double d = c0 * xi[3] + c1 * xi[2] - c2 * xi[1] + c3 * xi[0];
+        y[i] = a * a + b * b + c * c + d * d;
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const double S = 29.625;
+    __m256d s = _mm256_set1_pd(S);
+    for (size_t i = 0; i < N; ++i)
+    {
+        __m256d vec = _mm256_load_pd(&x[i*4]);
+        __m256d sq = _mm256_mul_pd(vec, vec);
+        __m256d temp = _mm256_hadd_pd(sq, sq);
+        temp = _mm256_hadd_pd(temp, temp);
+        __m256d scaled = _mm256_mul_sd(temp, s);
+        _mm_store_sd(y + i, _mm256_castpd256_pd128(scaled));
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+// Assuming N is defined in "common.h"
+// Optimize using derived algebraic identity: sum of squares * 29.625
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const double scale = 29.625;
+    const __m256d vscale = _mm256_set1_pd(scale);
+    size_t i;
+
+    for (i = 0; i < N; ++i, x += 4)
+    {
+        __m256d v = _mm256_load_pd(x);
+        __m256d v_squared = _mm256_mul_pd(v, v);
+        __m128d sum_lo = _mm256_castpd256_pd128(v_squared);
+        __m128d sum_hi = _mm256_extractf128_pd(v_squared, 1);
+        sum_lo = _mm_add_pd(sum_lo, sum_hi);
+        sum_lo = _mm_hadd_pd(sum_lo, sum_lo);
+        sum_lo = _mm_mul_sd(sum_lo, _mm256_castpd256_pd128(vscale));
+        _mm_store_sd(y + i, sum_lo);
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+1974.91 cycles
+
+Running: max_performance
+1905.68 cycles
 <<<
-
+1974.91 / 1905.68 = 1.03632824
 ================================
+#include <immintrin.h>
+#include "common.h"
 
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const double scale = 29.625;
+    size_t i = 0;
+    const size_t N_rounded = N - (N % 4);
+    
+    for (; i < N_rounded; i += 4) {
+        __m256d a = _mm256_load_pd(x + i*4 + 0);
+        __m256d b = _mm256_load_pd(x + i*4 + 4);
+        __m256d c = _mm256_load_pd(x + i*4 + 8);
+        __m256d d = _mm256_load_pd(x + i*4 + 12);
+        
+        a = _mm256_mul_pd(a, a);
+        b = _mm256_mul_pd(b, b);
+        c = _mm256_mul_pd(c, c);
+        d = _mm256_mul_pd(d, d);
+        
+        __m128d hadd0 = _mm_add_pd(_mm256_castpd256_pd128(a), _mm256_extractf128_pd(a, 1));
+        __m128d hadd1 = _mm_add_pd(_mm256_castpd256_pd128(b), _mm256_extractf128_pd(b, 1));
+        __m128d hadd2 = _mm_add_pd(_mm256_castpd256_pd128(c), _mm256_extractf128_pd(c, 1));
+        __m128d hadd3 = _mm_add_pd(_mm256_castpd256_pd128(d), _mm256_extractf128_pd(d, 1));
+        
+        hadd0 = _mm_hadd_pd(hadd0, hadd1);
+        hadd2 = _mm_hadd_pd(hadd2, hadd3);
+        
+        hadd0 = _mm_mul_pd(hadd0, _mm_set1_pd(scale));
+        hadd2 = _mm_mul_pd(hadd2, _mm_set1_pd(scale));
+        
+        double* out = y + i;
+        _mm_storel_pd(out    , hadd0);
+        _mm_storeh_pd(out + 1, hadd0);
+        _mm_storel_pd(out + 2, hadd2);
+        _mm_storeh_pd(out + 3, hadd2);
+    }
+    
+    for (; i < N; ++i) {
+        __m256d v = _mm256_load_pd(x + i*4);
+        v = _mm256_mul_pd(v, v);
+        __m128d sum = _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1));
+        sum = _mm_hadd_pd(sum, sum);
+        sum = _mm_mul_sd(sum, _mm_set1_pd(scale));
+        y[i] = _mm_cvtsd_f64(sum);
+    }
+}
 >>>
+Starting program. 2 functions registered.
 
+Running: slow_performance
+1970.73 cycles
+
+Running: max_performance
+1408.91 cycles
 <<<
-
+1970.73 / 1408.91 = 1.39876216
 ================================

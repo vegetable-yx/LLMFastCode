@@ -16,61 +16,110 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 
 ```
-#include <immintrin.h>
-#include "common.h"
-
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void max_performance(double *__restrict x, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d xmm0, xmm1;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            xmm0 = _mm256_loadu_pd(x + j * 8 + i * 2);
+            xmm1 = _mm256_lddqu_pd(x + j * 8 + i * 2 + 1);
+            _mm256_storeu_pd(y + i * 8 + j * 2, xmm0);
+            xmm1 = _mm256_xor_pd(xmm1, _mm256_set1_pd(-1.0));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 1, xmm1);
+        }
+    }
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d xmm0, xmm1;
+    double* x_ptr;
+    double* y_ptr;
+    for (int i = 0; i < 4; i++) {
+        x_ptr = &x[i * 2];
+        y_ptr = &y[i * 8];
+        for (int j = 0; j < 4; j++) {
+            xmm0 = _mm256_loadu_pd(x_ptr);
+            xmm1 = _mm256_setr_pd(1.0, -1.0, 1.0, -1.0);
+            xmm0 = _mm256_mul_pd(xmm0, xmm1);
+            _mm256_storeu_pd(y_ptr, xmm0);
+            x_ptr += 8;
+            y_ptr += 2;
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.4601 cycles
+Segmentation fault
 <<<
-
+WA
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d xmm0, xmm1;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            xmm0 = _mm256_loadu_pd(x + j * 8 + i * 2);
+            xmm1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 2);
+            _mm256_storeu_pd(y + i * 8 + j * 2, xmm0);
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 2, xmm1);
+            xmm0 = _mm256_loadu_pd(x + j * 8 + i * 2 + 4);
+            xmm1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 6);
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 4, xmm0);
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 6, xmm1);
+
+            xmm0 = _mm256_loadu_pd(x + j * 8 + i * 2 + 1);
+            xmm0 = _mm256_mul_pd(xmm0, _mm256_set1_pd(-1.0));
+            xmm1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 3);
+            xmm1 = _mm256_mul_pd(xmm1, _mm256_set1_pd(-1.0));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 1, xmm0);
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 3, xmm1);
+            xmm0 = _mm256_loadu_pd(x + j * 8 + i * 2 + 5);
+            xmm0 = _mm256_mul_pd(xmm0, _mm256_set1_pd(-1.0));
+            xmm1 = _mm256_loadu_pd(x + j * 8 + i * 2 + 7);
+            xmm1 = _mm256_mul_pd(xmm1, _mm256_set1_pd(-1.0));
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 5, xmm0);
+            _mm256_storeu_pd(y + i * 8 + j * 2 + 7, xmm1);
+        }
+    }
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.5341 cycles
+Segmentation fault
 <<<
-
+WA
 ================================

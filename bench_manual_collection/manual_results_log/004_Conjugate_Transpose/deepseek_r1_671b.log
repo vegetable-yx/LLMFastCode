@@ -16,61 +16,176 @@ Return **only** the full, ready-to-compile `max_performance` function—no other
 
 
 ```
-#include <immintrin.h>
-#include "common.h"
-
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
-    for (int i = 0; i < 32; ++i) {
-        z[i] = 0.0;
-    }
-
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            double real = 0.0;
-            double imag = 0.0;
-            for (int k = 0; k < 4; ++k) {
-                double a = x[(i * 4 + k) * 2];
-                double b = x[(i * 4 + k) * 2 + 1];
-
-                double c = y[(k * 4 + j) * 2];
-                double d = y[(k * 4 + j) * 2 + 1];
-
-                double prod_real = 2.0 * a * c - b * d;
-                double prod_imag = 2.0 * b * c + 2.0 * a * d;
-
-                real += prod_real;
-                imag += prod_imag;
-            }
-
-            z[(i * 4 + j) * 2] = real;
-            z[(i * 4 + j) * 2 + 1] = imag;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            y[i * 8 + j * 2] = x[j * 8 + i * 2];
+            y[i * 8 + j * 2 + 1] = -x[j * 8 + i * 2 + 1];
         }
     }
 }
 
-void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+void maxperformance(double *__restrict x, double *__restrict y)
 {
 }
 ```
 
 
 ================================
+#include <immintrin.h>
 
+void maxperformance(double *__restrict x, double *__restrict y) {
+    __m256d neg = _mm256_set1_pd(-1.0);
+    
+    // Process i=0
+    __m256d r0 = _mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(0,8,16,24)), 8);
+    __m256d i0 = _mm256_mul_pd(_mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(1,9,17,25)), 8), neg);
+    __m256d l0 = _mm256_unpacklo_pd(r0, i0);
+    __m256d h0 = _mm256_unpackhi_pd(r0, i0);
+    _mm256_storeu_pd(y+0, l0);
+    _mm256_storeu_pd(y+4, h0);
+    
+    // Process i=1
+    __m256d r1 = _mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(2,10,18,26)), 8);
+    __m256d i1 = _mm256_mul_pd(_mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(3,11,19,27)), 8), neg);
+    __m256d l1 = _mm256_unpacklo_pd(r1, i1);
+    __m256d h1 = _mm256_unpackhi_pd(r1, i1);
+    _mm256_storeu_pd(y+8, l1);
+    _mm256_storeu_pd(y+12, h1);
+    
+    // Process i=2
+    __m256d r2 = _mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(4,12,20,28)), 8);
+    __m256d i2 = _mm256_mul_pd(_mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(5,13,21,29)), 8), neg);
+    __m256d l2 = _mm256_unpacklo_pd(r2, i2);
+    __m256d h2 = _mm256_unpackhi_pd(r2, i2);
+    _mm256_storeu_pd(y+16, l2);
+    _mm256_storeu_pd(y+20, h2);
+    
+    // Process i=3
+    __m256d r3 = _mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(6,14,22,30)), 8);
+    __m256d i3 = _mm256_mul_pd(_mm256_i32gather_pd(x, _mm256_castsi128_si256(_mm_setr_epi32(7,15,23,31)), 8), neg);
+    __m256d l3 = _mm256_unpacklo_pd(r3, i3);
+    __m256d h3 = _mm256_unpackhi_pd(r3, i3);
+    _mm256_storeu_pd(y+24, l3);
+    _mm256_storeu_pd(y+28, h3);
+}
 >>>
-
+make: *** [Makefile:13: benchmark] Error 1
 <<<
-
+CE
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    const __m128i gather_idx = _mm_setr_epi32(0, 8, 16, 24);
+    __m256d r0, r1, r2, r3, i0, i1, i2, i3;
+    
+    r0 = _mm256_i32gather_pd(x+0, gather_idx, 8);
+    i0 = _mm256_i32gather_pd(x+1, gather_idx, 8);
+    r1 = _mm256_i32gather_pd(x+2, gather_idx, 8);
+    i1 = _mm256_i32gather_pd(x+3, gather_idx, 8);
+    r2 = _mm256_i32gather_pd(x+4, gather_idx, 8);
+    i2 = _mm256_i32gather_pd(x+5, gather_idx, 8);
+    r3 = _mm256_i32gather_pd(x+6, gather_idx, 8);
+    i3 = _mm256_i32gather_pd(x+7, gather_idx, 8);
+    
+    __m256d ni0 = _mm256_sub_pd(_mm256_setzero_pd(), i0);
+    __m256d ni1 = _mm256_sub_pd(_mm256_setzero_pd(), i1);
+    __m256d ni2 = _mm256_sub_pd(_mm256_setzero_pd(), i2);
+    __m256d ni3 = _mm256_sub_pd(_mm256_setzero_pd(), i3);
+    
+    __m256d y0a = _mm256_unpacklo_pd(r0, ni0);
+    __m256d y0b = _mm256_unpackhi_pd(r0, ni0);
+    __m256d y1a = _mm256_unpacklo_pd(r1, ni1);
+    __m256d y1b = _mm256_unpackhi_pd(r1, ni1);
+    __m256d y2a = _mm256_unpacklo_pd(r2, ni2);
+    __m256d y2b = _mm256_unpackhi_pd(r2, ni2);
+    __m256d y3a = _mm256_unpacklo_pd(r3, ni3);
+    __m256d y3b = _mm256_unpackhi_pd(r3, ni3);
+    
+    _mm256_storeu_pd(y+0,  y0a);
+    _mm256_storeu_pd(y+4,  y0b);
+    _mm256_storeu_pd(y+8,  y1a);
+    _mm256_storeu_pd(y+12, y1b);
+    _mm256_storeu_pd(y+16, y2a);
+    _mm256_storeu_pd(y+20, y2b);
+    _mm256_storeu_pd(y+24, y3a);
+    _mm256_storeu_pd(y+28, y3b);
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.5827 cycles
+
+Running: max_performance
+14.101 cycles
 <<<
-
+WA
 ================================
+#include <immintrin.h>
 
+void max_performance(double *__restrict x, double *__restrict y) {
+    __m256d first, second, second_neg, lo, hi;
+    __m128i idx_first, idx_second;
+    
+    // i=0
+    idx_first = _mm_setr_epi32(0,8,16,24);
+    first = _mm256_i32gather_pd(x, idx_first, 8);
+    idx_second = _mm_setr_epi32(1,9,17,25);
+    second = _mm256_i32gather_pd(x, idx_second, 8);
+    second_neg = _mm256_sub_pd(_mm256_setzero_pd(), second);
+    lo = _mm256_unpacklo_pd(first, second_neg);
+    hi = _mm256_unpackhi_pd(first, second_neg);
+    _mm256_storeu_pd(y + 0, lo);
+    _mm256_storeu_pd(y + 4, hi);
+    
+    // i=1
+    idx_first = _mm_setr_epi32(2,10,18,26);
+    first = _mm256_i32gather_pd(x, idx_first, 8);
+    idx_second = _mm_setr_epi32(3,11,19,27);
+    second = _mm256_i32gather_pd(x, idx_second, 8);
+    second_neg = _mm256_sub_pd(_mm256_setzero_pd(), second);
+    lo = _mm256_unpacklo_pd(first, second_neg);
+    hi = _mm256_unpackhi_pd(first, second_neg);
+    _mm256_storeu_pd(y + 8, lo);
+    _mm256_storeu_pd(y + 12, hi);
+    
+    // i=2
+    idx_first = _mm_setr_epi32(4,12,20,28);
+    first = _mm256_i32gather_pd(x, idx_first, 8);
+    idx_second = _mm_setr_epi32(5,13,21,29);
+    second = _mm256_i32gather_pd(x, idx_second, 8);
+    second_neg = _mm256_sub_pd(_mm256_setzero_pd(), second);
+    lo = _mm256_unpacklo_pd(first, second_neg);
+    hi = _mm256_unpackhi_pd(first, second_neg);
+    _mm256_storeu_pd(y + 16, lo);
+    _mm256_storeu_pd(y + 20, hi);
+    
+    // i=3
+    idx_first = _mm_setr_epi32(6,14,22,30);
+    first = _mm256_i32gather_pd(x, idx_first, 8);
+    idx_second = _mm_setr_epi32(7,15,23,31);
+    second = _mm256_i32gather_pd(x, idx_second, 8);
+    second_neg = _mm256_sub_pd(_mm256_setzero_pd(), second);
+    lo = _mm256_unpacklo_pd(first, second_neg);
+    hi = _mm256_unpackhi_pd(first, second_neg);
+    _mm256_storeu_pd(y + 24, lo);
+    _mm256_storeu_pd(y + 28, hi);
+}
 >>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
 
+Running: slow_performance1
+26.96 cycles
+
+Running: max_performance
+14.4936 cycles
 <<<
-
+WA
 ================================

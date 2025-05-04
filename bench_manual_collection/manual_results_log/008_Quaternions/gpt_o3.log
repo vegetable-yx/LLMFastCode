@@ -1,0 +1,218 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
+
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
+
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
+        }
+    }
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+}
+```
+
+
+================================
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A)
+{
+    const auto dot4 = [](__m256d a, __m256d b) -> double {
+        __m256d m    = _mm256_mul_pd(a, b);
+        __m256d t    = _mm256_permute4x64_pd(m, _MM_SHUFFLE(2, 3, 0, 1));
+        __m256d sum  = _mm256_add_pd(m, t);
+        __m128d hi   = _mm256_extractf128_pd(sum, 1);
+        __m128d lo   = _mm256_castpd256_pd128(sum);
+        __m128d tot  = _mm_add_pd(lo, hi);
+        tot          = _mm_hadd_pd(tot, tot);
+        return _mm_cvtsd_f64(tot);
+    };
+
+    __m256d x0 = _mm256_loadu_pd(x);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+
+    __m256d y0 = _mm256_loadu_pd(y);
+    __m256d y1 = _mm256_loadu_pd(y + 4);
+
+    const __m256d s0 = _mm256_setr_pd( 1.0, -1.0, -1.0, -1.0);
+    const __m256d s1 = _mm256_setr_pd( 1.0,  1.0,  1.0, -1.0);
+    const __m256d s2 = _mm256_setr_pd( 1.0, -1.0,  1.0,  1.0);
+    const __m256d s3 = _mm256_setr_pd( 1.0,  1.0, -1.0,  1.0);
+
+    const auto qm = [&](const __m256d p, const __m256d q, double* out) {
+        __m256d q0 = _mm256_mul_pd(q, s0);
+        out[0] = dot4(p, q0);
+
+        __m256d q1 = _mm256_permute4x64_pd(q, _MM_SHUFFLE(2, 3, 0, 1));
+        q1 = _mm256_mul_pd(q1, s1);
+        out[1] = dot4(p, q1);
+
+        __m256d q2 = _mm256_permute4x64_pd(q, _MM_SHUFFLE(1, 0, 3, 2));
+        q2 = _mm256_mul_pd(q2, s2);
+        out[2] = dot4(p, q2);
+
+        __m256d q3 = _mm256_permute4x64_pd(q, _MM_SHUFFLE(3, 2, 1, 0));
+        q3 = _mm256_mul_pd(q3, s3);
+        out[3] = dot4(p, q3);
+    };
+
+    qm(x0, y0, A);
+    qm(x0, y1, A + 4);
+    qm(x1, y0, A + 8);
+    qm(x1, y1, A + 12);
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+11.8482 cycles
+
+Running: maxperformance
+47.0757 cycles
+<<<
+WA
+================================
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A)
+{
+    auto dot4 = [](__m256d a, __m256d b) -> double {
+        __m256d p = _mm256_mul_pd(a, b);
+        __m256d s1 = _mm256_add_pd(p, _mm256_permute2f128_pd(p, p, 1));
+        __m256d s2 = _mm256_hadd_pd(s1, s1);
+        return _mm_cvtsd_f64(_mm256_castpd256_pd128(s2));
+    };
+
+    constexpr unsigned long long S = 0x8000000000000000ULL;
+    const __m256i m0 = _mm256_set_epi64x(S, S, S, 0);
+    const __m256i m1 = _mm256_set_epi64x(S, 0, 0, 0);
+    const __m256i m2 = _mm256_set_epi64x(0, 0, S, 0);
+    const __m256i m3 = _mm256_set_epi64x(0, S, 0, 0);
+
+    auto qm = [&](const __m256d vx, const __m256d vy, double* o) {
+        __m256d v0 = vy;
+        __m256d v1 = _mm256_permute4x64_pd(vy, 0xB1);
+        __m256d v2 = _mm256_permute4x64_pd(vy, 0x4E);
+        __m256d v3 = _mm256_permute4x64_pd(vy, 0x1B);
+
+        o[0] = dot4(vx, _mm256_xor_pd(v0, _mm256_castsi256_pd(m0)));
+        o[1] = dot4(vx, _mm256_xor_pd(v1, _mm256_castsi256_pd(m1)));
+        o[2] = dot4(vx, _mm256_xor_pd(v2, _mm256_castsi256_pd(m2)));
+        o[3] = dot4(vx, _mm256_xor_pd(v3, _mm256_castsi256_pd(m3)));
+    };
+
+    __m256d X0 = _mm256_loadu_pd(x);
+    __m256d X1 = _mm256_loadu_pd(x + 4);
+    __m256d Y0 = _mm256_loadu_pd(y);
+    __m256d Y1 = _mm256_loadu_pd(y + 4);
+
+    qm(X0, Y0, A);
+    qm(X0, Y1, A + 4);
+    qm(X1, Y0, A + 8);
+    qm(X1, Y1, A + 12);
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+11.8184 cycles
+
+Running: maxperformance
+36.1593 cycles
+<<<
+11.8184 / 36.1593 = 0.3268426103381426
+================================
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A)
+{
+    __m256d x0 = _mm256_loadu_pd(x);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+    __m256d y0 = _mm256_loadu_pd(y);
+    __m256d y1 = _mm256_loadu_pd(y + 4);
+
+    auto hsum = [](__m256d v) -> double {
+        __m128d t = _mm_add_pd(_mm256_castpd256_pd128(v), _mm256_extractf128_pd(v, 1));
+        t = _mm_hadd_pd(t, t);
+        return _mm_cvtsd_f64(t);
+    };
+
+    auto qmul = [&](const __m256d& a, const __m256d& b) -> __m256d {
+        const __m256i m0 = _mm256_set_epi64x(0x8000000000000000ULL, 0x8000000000000000ULL, 0x8000000000000000ULL, 0x0ULL);
+        double r0 = hsum(_mm256_mul_pd(a, _mm256_xor_pd(b, _mm256_castsi256_pd(m0))));
+
+        __m256d p1 = _mm256_permute4x64_pd(b, 177);
+        const __m256i m1 = _mm256_set_epi64x(0x8000000000000000ULL, 0x0ULL, 0x0ULL, 0x0ULL);
+        double r1 = hsum(_mm256_mul_pd(a, _mm256_xor_pd(p1, _mm256_castsi256_pd(m1))));
+
+        __m256d p2 = _mm256_permute4x64_pd(b, 78);
+        const __m256i m2 = _mm256_set_epi64x(0x0ULL, 0x0ULL, 0x8000000000000000ULL, 0x0ULL);
+        double r2 = hsum(_mm256_mul_pd(a, _mm256_xor_pd(p2, _mm256_castsi256_pd(m2))));
+
+        __m256d p3 = _mm256_permute4x64_pd(b, 27);
+        const __m256i m3 = _mm256_set_epi64x(0x0ULL, 0x8000000000000000ULL, 0x0ULL, 0x0ULL);
+        double r3 = hsum(_mm256_mul_pd(a, _mm256_xor_pd(p3, _mm256_castsi256_pd(m3))));
+
+        return _mm256_set_pd(r3, r2, r1, r0);
+    };
+
+    _mm256_storeu_pd(A,       qmul(x0, y0));
+    _mm256_storeu_pd(A + 4,   qmul(x0, y1));
+    _mm256_storeu_pd(A + 8,   qmul(x1, y0));
+    _mm256_storeu_pd(A + 12,  qmul(x1, y1));
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+11.7861 cycles
+
+Running: maxperformance
+35.8388 cycles
+<<<
+11.7861 / 35.8388 = 0.3288642476868645
+================================

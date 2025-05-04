@@ -1,0 +1,297 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
+
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
+
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
+        }
+    }
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A) {
+    __m256d x0 = _mm256_loadu_pd(x);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+
+    for (int j = 0; j < 2; j++) {
+        __m256d y0 = _mm256_loadu_pd(y + 4 * j);
+        __m256d y1 = _mm256_set_pd(-y0.m256d_f64[3], y0.m256d_f64[2], -y0.m256d_f64[1], y0.m256d_f64[0]);
+        __m256d y2 = _mm256_set_pd(-y0.m256d_f64[2], -y0.m256d_f64[3], y0.m256d_f64[0], y0.m256d_f64[1]);
+        __m256d y3 = _mm256_set_pd(y0.m256d_f64[1], -y0.m256d_f64[0], -y0.m256d_f64[3], y0.m256d_f64[2]);
+
+        __m256d r0 = _mm256_mul_pd(x0, y0);
+        __m256d r1 = _mm256_mul_pd(x0, y1);
+        __m256d r2 = _mm256_mul_pd(x0, y2);
+        __m256d r3 = _mm256_mul_pd(x0, y3);
+
+        r0 = _mm256_fmadd_pd(x1, _mm256_set_pd(-y0.m256d_f64[3], -y0.m256d_f64[2], -y0.m256d_f64[1], -y0.m256d_f64[0]), r0);
+        r1 = _mm256_fmadd_pd(x1, _mm256_set_pd(y0.m256d_f64[2], -y0.m256d_f64[3], y0.m256d_f64[0], -y0.m256d_f64[1]), r1);
+        r2 = _mm256_fmadd_pd(x1, _mm256_set_pd(y0.m256d_f64[1], y0.m256d_f64[0], -y0.m256d_f64[3], -y0.m256d_f64[2]), r2);
+        r3 = _mm256_fmadd_pd(x1, _mm256_set_pd(-y0.m256d_f64[0], y0.m256d_f64[1], y0.m256d_f64[2], -y0.m256d_f64[3]), r3);
+
+        r0 = _mm256_hadd_pd(r0, r0);
+        r1 = _mm256_hadd_pd(r1, r1);
+        r2 = _mm256_hadd_pd(r2, r2);
+        r3 = _mm256_hadd_pd(r3, r3);
+
+        __m128d r0_128 = _mm256_extractf128_pd(r0, 0);
+        __m128d r1_128 = _mm256_extractf128_pd(r1, 0);
+        __m128d r2_128 = _mm256_extractf128_pd(r2, 0);
+        __m128d r3_128 = _mm256_extractf128_pd(r3, 0);
+
+        _mm_storeu_pd(A + 4 * j, r0_128);
+        _mm_storeu_pd(A + 4 * j + 2, r1_128);
+        _mm_storeu_pd(A + 8 + 4 * j, r2_128);
+        _mm_storeu_pd(A + 8 + 4 * j + 2, r3_128);
+    }
+
+    x0 = _mm256_loadu_pd(x + 4);
+    x1 = _mm256_loadu_pd(x + 8);
+
+    for (int j = 0; j < 2; j++) {
+        __m256d y0 = _mm256_loadu_pd(y + 4 * j);
+        __m256d y1 = _mm256_set_pd(-y0.m256d_f64[3], y0.m256d_f64[2], -y0.m256d_f64[1], y0.m256d_f64[0]);
+        __m256d y2 = _mm256_set_pd(-y0.m256d_f64[2], -y0.m256d_f64[3], y0.m256d_f64[0], y0.m256d_f64[1]);
+        __m256d y3 = _mm256_set_pd(y0.m256d_f64[1], -y0.m256d_f64[0], -y0.m256d_f64[3], y0.m256d_f64[2]);
+
+        __m256d r0 = _mm256_mul_pd(x0, y0);
+        __m256d r1 = _mm256_mul_pd(x0, y1);
+        __m256d r2 = _mm256_mul_pd(x0, y2);
+        __m256d r3 = _mm256_mul_pd(x0, y3);
+
+        r0 = _mm256_fmadd_pd(x1, _mm256_set_pd(-y0.m256d_f64[3], -y0.m256d_f64[2], -y0.m256d_f64[1], -y0.m256d_f64[0]), r0);
+        r1 = _mm256_fmadd_pd(x1, _mm256_set_pd(y0.m256d_f64[2], -y0.m256d_f64[3], y0.m256d_f64[0], -y0.m256d_f64[1]), r1);
+        r2 = _mm256_fmadd_pd(x1, _mm256_set_pd(y0.m256d_f64[1], y0.m256d_f64[0], -y0.m256d_f64[3], -y0.m256d_f64[2]), r2);
+        r3 = _mm256_fmadd_pd(x1, _mm256_set_pd(-y0.m256d_f64[0], y0.m256d_f64[1], y0.m256d_f64[2], -y0.m256d_f64[3]), r3);
+
+        r0 = _mm256_hadd_pd(r0, r0);
+        r1 = _mm256_hadd_pd(r1, r1);
+        r2 = _mm256_hadd_pd(r2, r2);
+        r3 = _mm256_hadd_pd(r3, r3);
+
+        __m128d r0_128 = _mm256_extractf128_pd(r0, 0);
+        __m128d r1_128 = _mm256_extractf128_pd(r1, 0);
+        __m128d r2_128 = _mm256_extractf128_pd(r2, 0);
+        __m128d r3_128 = _mm256_extractf128_pd(r3, 0);
+
+        _mm_storeu_pd(A + 4 * j + 16, r0_128);
+        _mm_storeu_pd(A + 4 * j + 18, r1_128);
+        _mm_storeu_pd(A + 24 + 4 * j, r2_128);
+        _mm_storeu_pd(A + 24 + 4 * j + 2, r3_128);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A) {
+    __m256d x0 = _mm256_loadu_pd(x);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+
+    for (int j = 0; j < 2; j++) {
+        __m256d y0 = _mm256_broadcast_pd((__m128d*) (y + 4 * j));
+        __m256d y1 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 1));
+        __m256d y2 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 2));
+        __m256d y3 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 3));
+
+        __m256d r0 = _mm256_mul_pd(x0, y0);
+        r0 = _mm256_fmadd_pd(x1, y1, r0);
+        r0 = _mm256_fmadd_pd(x0, y2, r0);
+        r0 = _mm256_fmadd_pd(x1, y3, r0);
+
+        __m256d r1 = _mm256_mul_pd(x0, y1);
+        r1 = _mm256_fmsub_pd(x1, y0, r1);
+        r1 = _mm256_fmadd_pd(x0, y3, r1);
+        r1 = _mm256_fmsub_pd(x1, y2, r1);
+
+        __m256d r2 = _mm256_mul_pd(x0, y2);
+        r2 = _mm256_fmsub_pd(x1, y3, r2);
+        r2 = _mm256_fmsub_pd(x0, y0, r2);
+        r2 = _mm256_fmadd_pd(x1, y1, r2);
+
+        __m256d r3 = _mm256_mul_pd(x0, y3);
+        r3 = _mm256_fmadd_pd(x1, y2, r3);
+        r3 = _mm256_fmsub_pd(x0, y1, r3);
+        r3 = _mm256_fmadd_pd(x1, y0, r3);
+
+        __m256d sign1 = _mm256_set_pd(-1.0, 1.0, -1.0, 1.0);
+        __m256d sign2 = _mm256_set_pd(1.0, -1.0, -1.0, 1.0);
+        __m256d sign3 = _mm256_set_pd(-1.0, -1.0, 1.0, 1.0);
+
+        r0 = _mm256_mul_pd(r0, sign1);
+        r1 = _mm256_mul_pd(r1, sign2);
+        r2 = _mm256_mul_pd(r2, sign3);
+        r3 = _mm256_mul_pd(r3, sign1);
+
+        _mm256_storeu_pd(A + 4 * (0 * 2 + j), r0);
+        _mm256_storeu_pd(A + 4 * (1 * 2 + j), r1);
+    }
+
+    x0 = _mm256_loadu_pd(x + 4);
+    x1 = _mm256_loadu_pd(x + 8);
+
+    for (int j = 0; j < 2; j++) {
+        __m256d y0 = _mm256_broadcast_pd((__m128d*) (y + 4 * j));
+        __m256d y1 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 1));
+        __m256d y2 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 2));
+        __m256d y3 = _mm256_broadcast_pd((__m128d*) (y + 4 * j + 3));
+
+        __m256d r0 = _mm256_mul_pd(x0, y0);
+        r0 = _mm256_fmadd_pd(x1, y1, r0);
+        r0 = _mm256_fmadd_pd(x0, y2, r0);
+        r0 = _mm256_fmadd_pd(x1, y3, r0);
+
+        __m256d r1 = _mm256_mul_pd(x0, y1);
+        r1 = _mm256_fmsub_pd(x1, y0, r1);
+        r1 = _mm256_fmadd_pd(x0, y3, r1);
+        r1 = _mm256_fmsub_pd(x1, y2, r1);
+
+        __m256d r2 = _mm256_mul_pd(x0, y2);
+        r2 = _mm256_fmsub_pd(x1, y3, r2);
+        r2 = _mm256_fmsub_pd(x0, y0, r2);
+        r2 = _mm256_fmadd_pd(x1, y1, r2);
+
+        __m256d r3 = _mm256_mul_pd(x0, y3);
+        r3 = _mm256_fmadd_pd(x1, y2, r3);
+        r3 = _mm256_fmsub_pd(x0, y1, r3);
+        r3 = _mm256_fmadd_pd(x1, y0, r3);
+
+        __m256d sign1 = _mm256_set_pd(-1.0, 1.0, -1.0, 1.0);
+        __m256d sign2 = _mm256_set_pd(1.0, -1.0, -1.0, 1.0);
+        __m256d sign3 = _mm256_set_pd(-1.0, -1.0, 1.0, 1.0);
+
+        r0 = _mm256_mul_pd(r0, sign1);
+        r1 = _mm256_mul_pd(r1, sign2);
+        r2 = _mm256_mul_pd(r2, sign3);
+        r3 = _mm256_mul_pd(r3, sign1);
+
+        _mm256_storeu_pd(A + 4 * (2 * 2 + j), r0);
+        _mm256_storeu_pd(A + 4 * (3 * 2 + j), r1);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+11.8191 cycles
+Segmentation fault
+<<<
+WA
+================================
+#include <immintrin.h>
+
+void max_performance(double* __restrict x, double* __restrict y, double* __restrict A) {
+    __m256d x0 = _mm256_loadu_pd(x);
+    __m256d x1 = _mm256_loadu_pd(x + 4);
+
+    for (int j = 0; j < 2; j++) {
+        __m256d y0 = _mm256_broadcast_pd((__m128d*)(y + 4 * j));
+        __m256d y1 = _mm256_broadcast_pd((__m128d*)(y + 4 * j + 1));
+        __m256d y2 = _mm256_broadcast_pd((__m128d*)(y + 4 * j + 2));
+        __m256d y3 = _mm256_broadcast_pd((__m128d*)(y + 4 * j + 3));
+
+        __m256d r0 = _mm256_mul_pd(x0, y0);
+        r0 = _mm256_fmadd_pd(x1, y1, r0);
+        r0 = _mm256_fmadd_pd(x0, y2, r0);
+        r0 = _mm256_fmadd_pd(x1, y3, r0);
+
+        __m256d r1 = _mm256_mul_pd(x0, y1);
+        r1 = _mm256_fmsub_pd(x1, y0, r1);
+        r1 = _mm256_fmsub_pd(x0, y3, r1);
+        r1 = _mm256_fmadd_pd(x1, y2, r1);
+
+        __m256d r2 = _mm256_mul_pd(x0, y2);
+        r2 = _mm256_fmadd_pd(x1, y3, r2);
+        r2 = _mm256_fmsub_pd(x0, y0, r2);
+        r2 = _mm256_fmadd_pd(x1, y1, r2);
+
+        __m256d r3 = _mm256_mul_pd(x0, y3);
+        r3 = _mm256_fmsub_pd(x1, y2, r3);
+        r3 = _mm256_fmadd_pd(x0, y1, r3);
+        r3 = _mm256_fmadd_pd(x1, y0, r3);
+
+        int index = 4 * j;
+        _mm256_storeu_pd(A + index, r0);
+        _mm256_storeu_pd(A + index + 4, r1);
+        _mm256_storeu_pd(A + index + 8, r2);
+        _mm256_storeu_pd(A + index + 12, r3);
+
+        x0 = _mm256_loadu_pd(x + 8);
+        x1 = _mm256_loadu_pd(x + 12);
+
+        index += 16;
+        _mm256_storeu_pd(A + index, r0);
+        _mm256_storeu_pd(A + index + 4, r1);
+        _mm256_storeu_pd(A + index + 8, r2);
+        _mm256_storeu_pd(A + index + 12, r3);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+11.802 cycles
+Segmentation fault
+<<<
+WA
+================================

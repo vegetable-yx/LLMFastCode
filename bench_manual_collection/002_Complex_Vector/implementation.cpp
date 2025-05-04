@@ -7,7 +7,7 @@ using namespace std;
 #define N 1024
 
 // Precondition: 0 <= z[i] < 1.0
-void slow_performance1(double *x, double *y, double *z)
+void slow_performance1(double *__restrict x, double *__restrict y, double *__restrict z)
 {
   double t[2];
   for (int i = 0; i < N; i++)
@@ -45,7 +45,7 @@ void slow_performance1(double *x, double *y, double *z)
   }
 }
 
-void maxperformance(double *x, double *y, double *z)
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
   const __m256d vzero = _mm256_set1_pd(0.0);
   const __m256d vhalf = _mm256_set1_pd(0.5);

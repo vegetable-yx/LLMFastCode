@@ -1,0 +1,543 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y)
+{
+    const double _c[4] = {2.0, 5.0, 0.25, 0.75};
+    const double c0 = _c[0], c1 = _c[1], c2 = _c[2], c3 = _c[3];
+    for (size_t i = 0; i < N; ++i)
+    {
+        double *xi = &(x[i * 4]);
+        double a = c0 * xi[0] - c1 * xi[1] - c2 * xi[2] - c3 * xi[3];
+        double b = c0 * xi[1] + c1 * xi[0] + c2 * xi[3] - c3 * xi[2];
+        double c = c0 * xi[2] - c1 * xi[3] + c2 * xi[0] + c3 * xi[1];
+        double d = c0 * xi[3] + c1 * xi[2] - c2 * xi[1] + c3 * xi[0];
+        y[i] = a * a + b * b + c * c + d * d;
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m256d c0 = _mm256_set1_pd(2.0);
+    const __m256d c1 = _mm256_set1_pd(5.0);
+    const __m256d c2 = _mm256_set1_pd(0.25);
+    const __m256d c3 = _mm256_set1_pd(0.75);
+    
+    // Pre-compute constant vectors for the operations
+    const __m256d c0_c1_c2_c3 = _mm256_set_pd(0.75, 0.25, 5.0, 2.0);
+    const __m256d c0_c1_n_c2_n_c3 = _mm256_set_pd(-0.75, -0.25, 5.0, 2.0);
+    const __m256d c0_n_c1_c2_c3 = _mm256_set_pd(0.75, 0.25, -5.0, 2.0);
+    const __m256d c0_n_c1_n_c2_c3 = _mm256_set_pd(0.75, -0.25, -5.0, 2.0);
+    
+    const size_t block_size = 8; // Process 8 elements at a time
+    const size_t n_blocks = N / block_size;
+    const size_t remainder = N % block_size;
+    
+    // Main loop - process 8 elements at a time
+    for (size_t block = 0; block < n_blocks; ++block) {
+        size_t i1 = block * block_size;
+        size_t i2 = i1 + 1;
+        size_t i3 = i1 + 2;
+        size_t i4 = i1 + 3;
+        size_t i5 = i1 + 4;
+        size_t i6 = i1 + 5;
+        size_t i7 = i1 + 6;
+        size_t i8 = i1 + 7;
+        
+        // Load x vectors from memory - each xi is already size 4
+        __m256d xi1 = _mm256_load_pd(&x[i1 * 4]);
+        __m256d xi2 = _mm256_load_pd(&x[i2 * 4]); 
+        __m256d xi3 = _mm256_load_pd(&x[i3 * 4]);
+        __m256d xi4 = _mm256_load_pd(&x[i4 * 4]);
+        __m256d xi5 = _mm256_load_pd(&x[i5 * 4]);
+        __m256d xi6 = _mm256_load_pd(&x[i6 * 4]);
+        __m256d xi7 = _mm256_load_pd(&x[i7 * 4]);
+        __m256d xi8 = _mm256_load_pd(&x[i8 * 4]);
+        
+        // Compute a,b,c,d for each element using SIMD operations
+        // Element 1
+        __m256d xi1_perm1 = _mm256_permute4x64_pd(xi1, 0x1B); // Permute [3,2,1,0] -> [0,1,2,3]
+        __m256d xi1_perm2 = _mm256_permute4x64_pd(xi1, 0x4E); // Permute [1,0,3,2]
+        __m256d xi1_perm3 = _mm256_permute4x64_pd(xi1, 0xB1); // Permute [2,3,0,1]
+        
+        __m256d temp1_1 = _mm256_mul_pd(c0_c1_c2_c3, xi1);
+        __m256d temp1_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi1_perm1);
+        __m256d temp1_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi1_perm2);
+        __m256d temp1_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi1_perm3);
+        
+        __m256d abcd1 = _mm256_add_pd(_mm256_add_pd(temp1_1, temp1_2), 
+                                      _mm256_add_pd(temp1_3, temp1_4));
+        
+        __m256d result1 = _mm256_mul_pd(abcd1, abcd1);
+        double y1 = _mm256_reduce_add_pd(result1);
+        y[i1] = y1;
+        
+        // Element 2
+        __m256d xi2_perm1 = _mm256_permute4x64_pd(xi2, 0x1B);
+        __m256d xi2_perm2 = _mm256_permute4x64_pd(xi2, 0x4E);
+        __m256d xi2_perm3 = _mm256_permute4x64_pd(xi2, 0xB1);
+        
+        __m256d temp2_1 = _mm256_mul_pd(c0_c1_c2_c3, xi2);
+        __m256d temp2_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi2_perm1);
+        __m256d temp2_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi2_perm2);
+        __m256d temp2_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi2_perm3);
+        
+        __m256d abcd2 = _mm256_add_pd(_mm256_add_pd(temp2_1, temp2_2), 
+                                      _mm256_add_pd(temp2_3, temp2_4));
+        
+        __m256d result2 = _mm256_mul_pd(abcd2, abcd2);
+        double y2 = _mm256_reduce_add_pd(result2);
+        y[i2] = y2;
+        
+        // Element 3
+        __m256d xi3_perm1 = _mm256_permute4x64_pd(xi3, 0x1B);
+        __m256d xi3_perm2 = _mm256_permute4x64_pd(xi3, 0x4E);
+        __m256d xi3_perm3 = _mm256_permute4x64_pd(xi3, 0xB1);
+        
+        __m256d temp3_1 = _mm256_mul_pd(c0_c1_c2_c3, xi3);
+        __m256d temp3_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi3_perm1);
+        __m256d temp3_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi3_perm2);
+        __m256d temp3_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi3_perm3);
+        
+        __m256d abcd3 = _mm256_add_pd(_mm256_add_pd(temp3_1, temp3_2), 
+                                      _mm256_add_pd(temp3_3, temp3_4));
+        
+        __m256d result3 = _mm256_mul_pd(abcd3, abcd3);
+        double y3 = _mm256_reduce_add_pd(result3);
+        y[i3] = y3;
+        
+        // Element 4
+        __m256d xi4_perm1 = _mm256_permute4x64_pd(xi4, 0x1B);
+        __m256d xi4_perm2 = _mm256_permute4x64_pd(xi4, 0x4E);
+        __m256d xi4_perm3 = _mm256_permute4x64_pd(xi4, 0xB1);
+        
+        __m256d temp4_1 = _mm256_mul_pd(c0_c1_c2_c3, xi4);
+        __m256d temp4_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi4_perm1);
+        __m256d temp4_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi4_perm2);
+        __m256d temp4_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi4_perm3);
+        
+        __m256d abcd4 = _mm256_add_pd(_mm256_add_pd(temp4_1, temp4_2), 
+                                      _mm256_add_pd(temp4_3, temp4_4));
+        
+        __m256d result4 = _mm256_mul_pd(abcd4, abcd4);
+        double y4 = _mm256_reduce_add_pd(result4);
+        y[i4] = y4;
+        
+        // Element 5
+        __m256d xi5_perm1 = _mm256_permute4x64_pd(xi5, 0x1B);
+        __m256d xi5_perm2 = _mm256_permute4x64_pd(xi5, 0x4E);
+        __m256d xi5_perm3 = _mm256_permute4x64_pd(xi5, 0xB1);
+        
+        __m256d temp5_1 = _mm256_mul_pd(c0_c1_c2_c3, xi5);
+        __m256d temp5_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi5_perm1);
+        __m256d temp5_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi5_perm2);
+        __m256d temp5_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi5_perm3);
+        
+        __m256d abcd5 = _mm256_add_pd(_mm256_add_pd(temp5_1, temp5_2), 
+                                      _mm256_add_pd(temp5_3, temp5_4));
+        
+        __m256d result5 = _mm256_mul_pd(abcd5, abcd5);
+        double y5 = _mm256_reduce_add_pd(result5);
+        y[i5] = y5;
+        
+        // Element 6
+        __m256d xi6_perm1 = _mm256_permute4x64_pd(xi6, 0x1B);
+        __m256d xi6_perm2 = _mm256_permute4x64_pd(xi6, 0x4E);
+        __m256d xi6_perm3 = _mm256_permute4x64_pd(xi6, 0xB1);
+        
+        __m256d temp6_1 = _mm256_mul_pd(c0_c1_c2_c3, xi6);
+        __m256d temp6_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi6_perm1);
+        __m256d temp6_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi6_perm2);
+        __m256d temp6_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi6_perm3);
+        
+        __m256d abcd6 = _mm256_add_pd(_mm256_add_pd(temp6_1, temp6_2), 
+                                      _mm256_add_pd(temp6_3, temp6_4));
+        
+        __m256d result6 = _mm256_mul_pd(abcd6, abcd6);
+        double y6 = _mm256_reduce_add_pd(result6);
+        y[i6] = y6;
+        
+        // Element 7
+        __m256d xi7_perm1 = _mm256_permute4x64_pd(xi7, 0x1B);
+        __m256d xi7_perm2 = _mm256_permute4x64_pd(xi7, 0x4E);
+        __m256d xi7_perm3 = _mm256_permute4x64_pd(xi7, 0xB1);
+        
+        __m256d temp7_1 = _mm256_mul_pd(c0_c1_c2_c3, xi7);
+        __m256d temp7_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi7_perm1);
+        __m256d temp7_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi7_perm2);
+        __m256d temp7_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi7_perm3);
+        
+        __m256d abcd7 = _mm256_add_pd(_mm256_add_pd(temp7_1, temp7_2), 
+                                      _mm256_add_pd(temp7_3, temp7_4));
+        
+        __m256d result7 = _mm256_mul_pd(abcd7, abcd7);
+        double y7 = _mm256_reduce_add_pd(result7);
+        y[i7] = y7;
+        
+        // Element 8
+        __m256d xi8_perm1 = _mm256_permute4x64_pd(xi8, 0x1B);
+        __m256d xi8_perm2 = _mm256_permute4x64_pd(xi8, 0x4E);
+        __m256d xi8_perm3 = _mm256_permute4x64_pd(xi8, 0xB1);
+        
+        __m256d temp8_1 = _mm256_mul_pd(c0_c1_c2_c3, xi8);
+        __m256d temp8_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi8_perm1);
+        __m256d temp8_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi8_perm2);
+        __m256d temp8_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi8_perm3);
+        
+        __m256d abcd8 = _mm256_add_pd(_mm256_add_pd(temp8_1, temp8_2), 
+                                      _mm256_add_pd(temp8_3, temp8_4));
+        
+        __m256d result8 = _mm256_mul_pd(abcd8, abcd8);
+        double y8 = _mm256_reduce_add_pd(result8);
+        y[i8] = y8;
+    }
+    
+    // Handle remaining elements
+    for (size_t i = n_blocks * block_size; i < N; ++i) {
+        double *xi = &(x[i * 4]);
+        
+        // Load the 4 values
+        __m256d xi_vec = _mm256_load_pd(xi);
+        
+        // Create permutations for the operations
+        __m256d xi_perm1 = _mm256_permute4x64_pd(xi_vec, 0x1B); // [3,2,1,0]
+        __m256d xi_perm2 = _mm256_permute4x64_pd(xi_vec, 0x4E); // [1,0,3,2]
+        __m256d xi_perm3 = _mm256_permute4x64_pd(xi_vec, 0xB1); // [2,3,0,1]
+        
+        // Apply coefficients
+        __m256d temp_1 = _mm256_mul_pd(c0_c1_c2_c3, xi_vec);
+        __m256d temp_2 = _mm256_mul_pd(c0_c1_n_c2_n_c3, xi_perm1);
+        __m256d temp_3 = _mm256_mul_pd(c0_n_c1_c2_c3, xi_perm2);
+        __m256d temp_4 = _mm256_mul_pd(c0_n_c1_n_c2_c3, xi_perm3);
+        
+        // Sum to get [a,b,c,d]
+        __m256d abcd = _mm256_add_pd(_mm256_add_pd(temp_1, temp_2), 
+                                    _mm256_add_pd(temp_3, temp_4));
+        
+        // Square and sum to get a*a + b*b + c*c + d*d
+        __m256d result = _mm256_mul_pd(abcd, abcd);
+        y[i] = _mm256_reduce_add_pd(result);
+    }
+}
+
+// Helper function for horizontal sum of __m256d vector
+inline double _mm256_reduce_add_pd(__m256d v) {
+    __m128d vlow  = _mm256_castpd256_pd128(v);
+    __m128d vhigh = _mm256_extractf128_pd(v, 1);
+    vlow  = _mm_add_pd(vlow, vhigh);
+    __m128d high64 = _mm_unpackhi_pd(vlow, vlow);
+    return _mm_cvtsd_f64(_mm_add_sd(vlow, high64));
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+1971.82 cycles
+
+Running: max_performance
+3372.96 cycles
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    // Load constants into AVX2 registers once
+    const __m256d c0 = _mm256_set1_pd(2.0);
+    const __m256d c1 = _mm256_set1_pd(5.0);
+    const __m256d c2 = _mm256_set1_pd(0.25);
+    const __m256d c3 = _mm256_set1_pd(0.75);
+    
+    // Pre-computed constants for SIMD operations
+    const __m256d sign_mask1 = _mm256_set_pd(-1.0, 1.0, -1.0, 1.0);
+    const __m256d sign_mask2 = _mm256_set_pd(-1.0, -1.0, 1.0, 1.0);
+    const __m256d sign_mask3 = _mm256_set_pd(1.0, -1.0, -1.0, 1.0);
+    
+    // Process 2 iterations per loop (8 elements at a time)
+    for (size_t i = 0; i < N; i += 2)
+    {
+        // Load 2 sets of 4 doubles (8 total)
+        __m256d x0 = _mm256_load_pd(&x[i * 4]);
+        __m256d x1 = _mm256_load_pd(&x[(i + 1) * 4]);
+        
+        // Compute elements for first iteration
+        // For a: c0*xi[0] - c1*xi[1] - c2*xi[2] - c3*xi[3]
+        __m256d a0_terms = _mm256_mul_pd(x0, _mm256_set_pd(
+            -0.75,  // -c3
+            -0.25,  // -c2
+            -5.0,   // -c1
+            2.0     // c0
+        ));
+        
+        // For b: c0*xi[1] + c1*xi[0] + c2*xi[3] - c3*xi[2]
+        __m256d b0_terms = _mm256_mul_pd(x0, _mm256_set_pd(
+            0.25,   // c2
+            -0.75,  // -c3
+            2.0,    // c0
+            5.0     // c1
+        ));
+        
+        // For c: c0*xi[2] - c1*xi[3] + c2*xi[0] + c3*xi[1]
+        __m256d c0_terms = _mm256_mul_pd(x0, _mm256_set_pd(
+            -5.0,   // -c1
+            2.0,    // c0
+            0.75,   // c3
+            0.25    // c2
+        ));
+        
+        // For d: c0*xi[3] + c1*xi[2] - c2*xi[1] + c3*xi[0]
+        __m256d d0_terms = _mm256_mul_pd(x0, _mm256_set_pd(
+            2.0,    // c0
+            5.0,    // c1
+            -0.25,  // -c2
+            0.75    // c3
+        ));
+        
+        // Compute permutations for the shuffles
+        __m256d x0_perm1 = _mm256_permute4x64_pd(x0, 0x1B); // 0,1,2,3 -> 3,2,1,0
+        __m256d x0_perm2 = _mm256_permute4x64_pd(x0, 0x4E); // 0,1,2,3 -> 2,3,0,1
+        __m256d x0_perm3 = _mm256_permute4x64_pd(x0, 0xB1); // 0,1,2,3 -> 1,0,3,2
+        
+        // Multiply permuted vectors by coefficient vectors and add to terms
+        a0_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x0, 0x39), a0_terms); // add c1*xi[3], reordered
+        b0_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x0, 0x93), b0_terms); // add c1*xi[2], reordered
+        c0_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x0, 0x4E), c0_terms); // add c1*xi[1], reordered
+        d0_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x0, 0x39), d0_terms); // add c1*xi[0], reordered
+        
+        // Horizontal add to get single values for a, b, c, d
+        __m256d sum0 = _mm256_hadd_pd(a0_terms, b0_terms);
+        __m256d sum1 = _mm256_hadd_pd(c0_terms, d0_terms);
+        
+        // Permute to get results in the right order
+        __m256d perm_sum0 = _mm256_permute2f128_pd(sum0, sum1, 0x20);
+        __m256d perm_sum1 = _mm256_permute2f128_pd(sum0, sum1, 0x31);
+        
+        // Final horizontal add
+        __m256d abcd0 = _mm256_add_pd(perm_sum0, perm_sum1);
+        
+        // Square each element (a*a, b*b, c*c, d*d)
+        __m256d squared0 = _mm256_mul_pd(abcd0, abcd0);
+        
+        // Horizontal add to get a*a + b*b + c*c + d*d
+        __m256d result0 = _mm256_hadd_pd(squared0, squared0);
+        
+        // Compute the same for the second iteration (x1)
+        // Similar calculations for second set of data
+        __m256d a1_terms = _mm256_mul_pd(x1, _mm256_set_pd(
+            -0.75,  // -c3
+            -0.25,  // -c2
+            -5.0,   // -c1
+            2.0     // c0
+        ));
+        
+        __m256d b1_terms = _mm256_mul_pd(x1, _mm256_set_pd(
+            0.25,   // c2
+            -0.75,  // -c3
+            2.0,    // c0
+            5.0     // c1
+        ));
+        
+        __m256d c1_terms = _mm256_mul_pd(x1, _mm256_set_pd(
+            -5.0,   // -c1
+            2.0,    // c0
+            0.75,   // c3
+            0.25    // c2
+        ));
+        
+        __m256d d1_terms = _mm256_mul_pd(x1, _mm256_set_pd(
+            2.0,    // c0
+            5.0,    // c1
+            -0.25,  // -c2
+            0.75    // c3
+        ));
+        
+        // Compute permutations for the shuffles
+        __m256d x1_perm1 = _mm256_permute4x64_pd(x1, 0x1B);
+        __m256d x1_perm2 = _mm256_permute4x64_pd(x1, 0x4E);
+        __m256d x1_perm3 = _mm256_permute4x64_pd(x1, 0xB1);
+        
+        a1_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x1, 0x39), a1_terms);
+        b1_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x1, 0x93), b1_terms);
+        c1_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x1, 0x4E), c1_terms);
+        d1_terms = _mm256_fmadd_pd(c1, _mm256_permute4x64_pd(x1, 0x39), d1_terms);
+        
+        __m256d sum2 = _mm256_hadd_pd(a1_terms, b1_terms);
+        __m256d sum3 = _mm256_hadd_pd(c1_terms, d1_terms);
+        
+        __m256d perm_sum2 = _mm256_permute2f128_pd(sum2, sum3, 0x20);
+        __m256d perm_sum3 = _mm256_permute2f128_pd(sum2, sum3, 0x31);
+        
+        __m256d abcd1 = _mm256_add_pd(perm_sum2, perm_sum3);
+        
+        __m256d squared1 = _mm256_mul_pd(abcd1, abcd1);
+        __m256d result1 = _mm256_hadd_pd(squared1, squared1);
+        
+        // Store results - extract the sums and store in y[i] and y[i+1]
+        double tmp[4];
+        _mm256_storeu_pd(tmp, _mm256_blend_pd(result0, result1, 0xC));
+        y[i] = tmp[0] + tmp[1];
+        y[i+1] = tmp[2] + tmp[3];
+    }
+    
+    // Handle remaining element if N is odd
+    if (N % 2) {
+        size_t i = N - 1;
+        double *xi = &(x[i * 4]);
+        double a = 2.0 * xi[0] - 5.0 * xi[1] - 0.25 * xi[2] - 0.75 * xi[3];
+        double b = 2.0 * xi[1] + 5.0 * xi[0] + 0.25 * xi[3] - 0.75 * xi[2];
+        double c = 2.0 * xi[2] - 5.0 * xi[3] + 0.25 * xi[0] + 0.75 * xi[1];
+        double d = 2.0 * xi[3] + 5.0 * xi[2] - 0.25 * xi[1] + 0.75 * xi[0];
+        y[i] = a * a + b * b + c * c + d * d;
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+1974.75 cycles
+
+Running: max_performance
+6264.32 cycles
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    // Load constants into AVX2 registers
+    const __m256d c0_vec = _mm256_set1_pd(2.0);
+    const __m256d c1_vec = _mm256_set1_pd(5.0);
+    const __m256d c2_vec = _mm256_set1_pd(0.25);
+    const __m256d c3_vec = _mm256_set1_pd(0.75);
+
+    // Create sign masks for efficient computation
+    const __m256d sign_mask1 = _mm256_set_pd(-1.0, 1.0, -1.0, -1.0);  // For c1 terms
+    const __m256d sign_mask2 = _mm256_set_pd(-1.0, -1.0, 1.0, -1.0);  // For c2 terms
+    const __m256d sign_mask3 = _mm256_set_pd(-1.0, 1.0, -1.0, -1.0);  // For c3 terms
+
+    // Allocate aligned temporary storage for reduction
+    alignas(32) double tmp[4];
+
+    // Process 4 elements at a time (unrolled loop)
+    size_t i;
+    for (i = 0; i + 3 < N; i += 4) {
+        // Pre-fetch data for next iteration to reduce memory latency
+        _mm_prefetch((const char*)&x[(i + 4) * 4], _MM_HINT_T0);
+        
+        // Process 4 elements in parallel
+        for (size_t j = 0; j < 4; j++) {
+            double *xi = &(x[(i + j) * 4]);
+            
+            // Load input vector [x0,x1,x2,x3]
+            __m256d xi_vec = _mm256_load_pd(xi);
+            
+            // Create permuted versions for coefficient calculations
+            // Permute for c1 terms: [x1,x0,x3,x2]
+            __m256d xi_perm1 = _mm256_permute_pd(xi_vec, 0x5);
+            
+            // Permute for c2 terms: [x2,x3,x0,x1]
+            __m256d xi_perm2 = _mm256_permute4x64_pd(xi_vec, 0x4E);
+            
+            // Permute for c3 terms: [x3,x2,x1,x0]
+            __m256d xi_perm3 = _mm256_permute4x64_pd(xi_vec, 0x1B);
+            
+            // Compute all terms simultaneously with correct signs
+            // c0 * [x0,x1,x2,x3]
+            __m256d term0 = _mm256_mul_pd(c0_vec, xi_vec);
+            
+            // c1 * [x1,x0,x3,x2] with signs
+            __m256d term1 = _mm256_mul_pd(c1_vec, xi_perm1);
+            __m256d signed_term1 = _mm256_mul_pd(term1, sign_mask1);
+            
+            // c2 * [x2,x3,x0,x1] with signs
+            __m256d term2 = _mm256_mul_pd(c2_vec, xi_perm2);
+            __m256d signed_term2 = _mm256_mul_pd(term2, sign_mask2);
+            
+            // c3 * [x3,x2,x1,x0] with signs
+            __m256d term3 = _mm256_mul_pd(c3_vec, xi_perm3);
+            __m256d signed_term3 = _mm256_mul_pd(term3, sign_mask3);
+            
+            // Sum all terms to get [a,b,c,d]
+            __m256d sum1 = _mm256_add_pd(term0, signed_term1);
+            __m256d sum2 = _mm256_add_pd(signed_term2, signed_term3);
+            __m256d result = _mm256_add_pd(sum1, sum2);
+            
+            // Square each component
+            __m256d squared = _mm256_mul_pd(result, result);
+            
+            // Store to temporary aligned memory and sum manually (faster than _mm256_hadd_pd)
+            _mm256_store_pd(tmp, squared);
+            y[i + j] = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+        }
+    }
+    
+    // Handle remaining elements
+    for (; i < N; ++i) {
+        double *xi = &(x[i * 4]);
+        
+        // Load input vector
+        __m256d xi_vec = _mm256_load_pd(xi);
+        
+        // Create permuted versions
+        __m256d xi_perm1 = _mm256_permute_pd(xi_vec, 0x5);
+        __m256d xi_perm2 = _mm256_permute4x64_pd(xi_vec, 0x4E);
+        __m256d xi_perm3 = _mm256_permute4x64_pd(xi_vec, 0x1B);
+        
+        // Compute with correct signs
+        __m256d term0 = _mm256_mul_pd(c0_vec, xi_vec);
+        __m256d term1 = _mm256_mul_pd(c1_vec, xi_perm1);
+        __m256d signed_term1 = _mm256_mul_pd(term1, sign_mask1);
+        __m256d term2 = _mm256_mul_pd(c2_vec, xi_perm2);
+        __m256d signed_term2 = _mm256_mul_pd(term2, sign_mask2);
+        __m256d term3 = _mm256_mul_pd(c3_vec, xi_perm3);
+        __m256d signed_term3 = _mm256_mul_pd(term3, sign_mask3);
+        
+        // Sum and square
+        __m256d sum1 = _mm256_add_pd(term0, signed_term1);
+        __m256d sum2 = _mm256_add_pd(signed_term2, signed_term3);
+        __m256d result = _mm256_add_pd(sum1, sum2);
+        __m256d squared = _mm256_mul_pd(result, result);
+        
+        // Reduce to final result
+        _mm256_store_pd(tmp, squared);
+        y[i] = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+1970.67 cycles
+
+Running: max_performance
+4128.31 cycles
+<<<
+WA
+================================

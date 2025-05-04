@@ -5,7 +5,7 @@
 #define N 1024
 
 // x, y, z are __attribute__((aligned(32)))
-void slow_performance1(double *x, double *y, double *z)
+void slow_performance1(double *__restrict x, double *__restrict y, double *__restrict z)
 {
     for (int i = 0; i < N; i++)
     {
@@ -23,7 +23,7 @@ void slow_performance1(double *x, double *y, double *z)
 }
 
 // x, y, z are __attribute__((aligned(32)))
-void maxperformance(double *x, double *y, double *z)
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
     const __m256i one64 = _mm256_set1_epi64x(1);
     const __m256d three = _mm256_set1_pd(3.0);

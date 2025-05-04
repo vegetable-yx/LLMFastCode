@@ -1,0 +1,205 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include "common.h"
+#include <immintrin.h>
+#include <math.h>
+
+#define NC 32
+#define NR 64
+
+void slow_performance1(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
+
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    // Initialize y with zeros using AVX2
+    for (int j = 0; j < NC; j += 4) {
+        _mm256_store_pd(&y[j], _mm256_setzero_pd());
+    }
+
+    // Process 4 rows at a time
+    for (int i = 0; i < NR; i += 4) {
+        // Load 4 consecutive values from x
+        __m256d x0 = _mm256_set_pd(x[i+3], x[i+2], x[i+1], x[i+0]);
+        
+        // Process 4 columns at a time
+        for (int j = 0; j < NC; j += 4) {
+            // Load accumulated values from y
+            __m256d y_val = _mm256_load_pd(&y[j]);
+            
+            // Process first row
+            __m256d a_row0 = _mm256_load_pd(&A[i * NC + j]);
+            __m256d x0_broadcast = _mm256_broadcast_sd(&x[i]);
+            y_val = _mm256_fmadd_pd(a_row0, x0_broadcast, y_val);
+            
+            // Process second row
+            __m256d a_row1 = _mm256_load_pd(&A[(i+1) * NC + j]);
+            __m256d x1_broadcast = _mm256_broadcast_sd(&x[i+1]);
+            y_val = _mm256_fmadd_pd(a_row1, x1_broadcast, y_val);
+            
+            // Process third row
+            __m256d a_row2 = _mm256_load_pd(&A[(i+2) * NC + j]);
+            __m256d x2_broadcast = _mm256_broadcast_sd(&x[i+2]);
+            y_val = _mm256_fmadd_pd(a_row2, x2_broadcast, y_val);
+            
+            // Process fourth row
+            __m256d a_row3 = _mm256_load_pd(&A[(i+3) * NC + j]);
+            __m256d x3_broadcast = _mm256_broadcast_sd(&x[i+3]);
+            y_val = _mm256_fmadd_pd(a_row3, x3_broadcast, y_val);
+            
+            // Store back to y
+            _mm256_store_pd(&y[j], y_val);
+        }
+    }
+    
+    // Handle remaining rows
+    for (int i = (NR / 4) * 4; i < NR; i++) {
+        __m256d x_broadcast = _mm256_set1_pd(x[i]);
+        
+        for (int j = 0; j < NC; j += 4) {
+            __m256d y_val = _mm256_load_pd(&y[j]);
+            __m256d a_row = _mm256_load_pd(&A[i * NC + j]);
+            y_val = _mm256_fmadd_pd(a_row, x_broadcast, y_val);
+            _mm256_store_pd(&y[j], y_val);
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+209.074 cycles
+
+Running: maxperformance
+268.585 cycles
+<<<
+209.074 / 268.585 = 0.7784276858350244
+================================
+void max_performance(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    // Initialize y to zeros with AVX2
+    for (int j = 0; j < NC; j += 4) {
+        _mm256_store_pd(&y[j], _mm256_setzero_pd());
+    }
+
+    // Process 4 rows at a time
+    for (int i = 0; i < NR; i += 4) {
+        // Load 4 consecutive x values
+        __m256d x0 = _mm256_load_pd(&x[i]);
+        
+        // Process 4 columns at a time
+        for (int j = 0; j < NC; j += 4) {
+            // Load current y values
+            __m256d y_val = _mm256_load_pd(&y[j]);
+            
+            // Process the 4x4 block of A
+            __m256d a_row0 = _mm256_load_pd(&A[(i+0) * NC + j]);
+            __m256d a_row1 = _mm256_load_pd(&A[(i+1) * NC + j]);
+            __m256d a_row2 = _mm256_load_pd(&A[(i+2) * NC + j]);
+            __m256d a_row3 = _mm256_load_pd(&A[(i+3) * NC + j]);
+            
+            // Multiply and accumulate using FMA operations
+            y_val = _mm256_fmadd_pd(a_row0, _mm256_broadcast_sd(&x[i+0]), y_val);
+            y_val = _mm256_fmadd_pd(a_row1, _mm256_broadcast_sd(&x[i+1]), y_val);
+            y_val = _mm256_fmadd_pd(a_row2, _mm256_broadcast_sd(&x[i+2]), y_val);
+            y_val = _mm256_fmadd_pd(a_row3, _mm256_broadcast_sd(&x[i+3]), y_val);
+            
+            // Store the result back
+            _mm256_store_pd(&y[j], y_val);
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+208.544 cycles
+
+Running: maxperformance
+268.323 cycles
+<<<
+208.544 / 268.323 = 0.7772125386194997
+================================
+void max_performance(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    // Initialize y with zeros using AVX2
+    for (int j = 0; j < NC; j += 4) {
+        _mm256_store_pd(&y[j], _mm256_setzero_pd());
+    }
+
+    // Process 4 rows at a time
+    for (int i = 0; i < NR; i += 4) {
+        __m256d x0 = _mm256_broadcast_sd(&x[i]);
+        __m256d x1 = _mm256_broadcast_sd(&x[i+1]);
+        __m256d x2 = _mm256_broadcast_sd(&x[i+2]);
+        __m256d x3 = _mm256_broadcast_sd(&x[i+3]);
+
+        // Process 4 columns at a time
+        for (int j = 0; j < NC; j += 4) {
+            // Load current values of y
+            __m256d y_vals = _mm256_load_pd(&y[j]);
+            
+            // Process A[i][j] * x[i]
+            __m256d a0_vals = _mm256_load_pd(&A[i * NC + j]);
+            y_vals = _mm256_fmadd_pd(a0_vals, x0, y_vals);
+            
+            // Process A[i+1][j] * x[i+1]
+            __m256d a1_vals = _mm256_load_pd(&A[(i+1) * NC + j]);
+            y_vals = _mm256_fmadd_pd(a1_vals, x1, y_vals);
+            
+            // Process A[i+2][j] * x[i+2]
+            __m256d a2_vals = _mm256_load_pd(&A[(i+2) * NC + j]);
+            y_vals = _mm256_fmadd_pd(a2_vals, x2, y_vals);
+            
+            // Process A[i+3][j] * x[i+3]
+            __m256d a3_vals = _mm256_load_pd(&A[(i+3) * NC + j]);
+            y_vals = _mm256_fmadd_pd(a3_vals, x3, y_vals);
+            
+            // Store the results back to y
+            _mm256_store_pd(&y[j], y_vals);
+        }
+    }
+}
+>>>
+Running: slow_performance1
+210.652 cycles
+
+Running: maxperformance
+209.082 cycles
+<<<
+210.652 / 209.082 = 1.0075090156015343
+================================

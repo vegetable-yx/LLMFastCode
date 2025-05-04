@@ -1,0 +1,148 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// Precondition: n = 1024, m = 4
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    for (int i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (int k = 0; k < m; ++k)
+        {
+            int x_index = i + (m - 1) - k;
+            sum += (i + k + 1) * h[k] * std::abs(x[x_index]);
+        }
+        y[i] = sum;
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m) {
+    const __m256d h_vec = _mm256_loadu_pd(h);
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000));
+    
+    for (int i = 0; i < n; ++i) {
+        __m256d x_vec = _mm256_loadu_pd(x + i);
+        __m256d x_rev = _mm256_permute2f128_pd(x_vec, x_vec, 0x11);
+        x_rev = _mm256_shuffle_pd(x_rev, x_rev, 0x44);
+        __m256d abs_x_rev = _mm256_andnot_pd(sign_mask, x_rev);
+        __m256d product = _mm256_mul_pd(abs_x_rev, h_vec);
+        __m256d coeffs = _mm256_set_pd((double)(i+4), (double)(i+3), (double)(i+2), (double)(i+1));
+        product = _mm256_mul_pd(product, coeffs);
+        product = _mm256_hadd_pd(product, product);
+        product = _mm256_hadd_pd(product, product);
+        y[i] = _mm256_extract_pd(product, 0);
+    }
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    __m256d h_vec = _mm256_loadu_pd(h);
+    __m256d offset = _mm256_setr_pd(0.0, 1.0, 2.0, 3.0);
+    const __m256d mask = _mm256_set1_pd(0x7FFFFFFFFFFFFFFF);
+
+    for (int i = 0; i < n; ++i)
+    {
+        __m256d x_vec = _mm256_loadu_pd(&x[i]);
+        x_vec = _mm256_permute4x64_pd(x_vec, _MM_PERM_BADC);
+        __m256d x_abs = _mm256_and_pd(x_vec, mask);
+
+        __m256d i_plus_1 = _mm256_set1_pd((double)(i + 1));
+        __m256d coefficients = _mm256_add_pd(i_plus_1, offset);
+
+        __m256d h_coeffs = _mm256_mul_pd(coefficients, h_vec);
+        __m256d product = _mm256_mul_pd(h_coeffs, x_abs);
+
+        product = _mm256_hadd_pd(product, product);
+        product = _mm256_hadd_pd(product, product);
+        double sum = _mm256_cvtsd_f64(product);
+
+        y[i] = sum;
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+6264.12 cycles
+
+Running: maxperformance
+3822.02 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    __m256d h_loaded = _mm256_loadu_pd(h);
+    __m256d h_perm = _mm256_permute_pd(h_loaded, 0xe4);
+    __m256d offset = _mm256_set_pd(3.0, 2.0, 1.0, 0.0);
+    __m256d sign_mask = _mm256_set1_pd(0x7FFFFFFFFFFFFFFF);
+
+    for (int i = 0; i < n; ++i) {
+        __m256d x_vec = _mm256_loadu_pd(x + i);
+        __m256d x_rev = _mm256_permute_pd(x_vec, 0xe4);
+        __m256d x_abs = _mm256_and_pd(x_rev, sign_mask);
+
+        __m256d i_plus_1 = _mm256_set1_pd((double)(i + 1));
+        __m256d coeffs = _mm256_add_pd(i_plus_1, offset);
+        __m256d h_coeffs = _mm256_mul_pd(coeffs, h_perm);
+
+        __m256d prod = _mm256_mul_pd(x_abs, h_coeffs);
+
+        __m256d sum_vec = _mm256_hadd_pd(prod, _mm256_setzero_pd());
+        sum_vec = _mm256_hadd_pd(sum_vec, _mm256_setzero_pd());
+        double sum = _mm256_cvtsd_f64(sum_vec);
+
+        y[i] = sum;
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+6019.88 cycles
+
+Running: maxperformance
+3828.98 cycles
+<<<
+WA
+================================

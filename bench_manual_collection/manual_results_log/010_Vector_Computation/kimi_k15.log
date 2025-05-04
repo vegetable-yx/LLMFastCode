@@ -1,0 +1,209 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    int i = 0;
+    const int vec_size = 4;
+    for (; i <= N - vec_size; i += vec_size) {
+        __m256d x_vec = _mm256_load_pd(x + i);
+        __m128d lower = _mm256_extractf128_pd(x_vec, 0);
+        lower = _mm_shuffle_pd(lower, lower, 0x01);
+        __m128d upper = _mm256_extractf128_pd(x_vec, 1);
+        upper = _mm_shuffle_pd(upper, upper, 0x01);
+        __m256d a_vec = _mm256_set_m128d(upper, lower);
+
+        __m256d y_vec = _mm256_load_pd(y + i);
+
+        __m256d rounded_a = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(y_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+
+        __m256d cmp_mask = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OQ);
+
+        __m256d true_val = _mm256_add_pd(a_vec, _mm256_mul_pd(a_vec, y_vec));
+
+        __m256d idx = _mm256_set_pd(i+3, i+2, i+1, i);
+        __m256d three_i = _mm256_mul_pd(idx, _mm256_set1_pd(3.0));
+        __m256d false_val = _mm256_sub_pd(y_vec, three_i);
+
+        __m256d result = _mm256_blendv_pd(false_val, true_val, cmp_mask);
+        _mm256_store_pd(z + i, result);
+    }
+
+    for (; i < N; i++) {
+        double a = (i % 2 == 0) ? x[i + 1] : x[i - 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        } else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+16058 cycles
+
+Running: maxperformance
+1346.88 cycles
+<<<
+16058 / 1346.88 = 11.922368733665953
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    int i;
+    for (i = 0; i + 3 < N; i +=4) {
+        __m256d x_vec = _mm256_load_pd(&x[i]);
+        __m128d low = _mm256_extractf128_pd(x_vec, 0);
+        __m128d high = _mm256_extractf128_pd(x_vec, 1);
+        low = _mm_shuffle_pd(low, low, _MM_SHUFFLE2(1, 0));
+        high = _mm_shuffle_pd(high, high, _MM_SHUFFLE2(1, 0));
+        __m256d a_vec = _mm256_set_m128d(high, low);
+        
+        __m256d b_vec = _mm256_load_pd(&y[i]);
+        
+        __m256d i_vec = _mm256_set_pd((double)(i+3), (double)(i+2), (double)(i+1), (double)i);
+        __m256d three_i = _mm256_mul_pd(i_vec, _mm256_set1_pd(3.0));
+        
+        __m256d rounded_a = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        
+        __m256d cmp_mask = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OQ);
+        
+        __m256d result_if = _mm256_fmadd_pd(a_vec, b_vec, a_vec);
+        __m256d result_else = _mm256_sub_pd(b_vec, three_i);
+        
+        __m256d result = _mm256_blendv_pd(result_else, result_if, cmp_mask);
+        
+        _mm256_store_pd(&z[i], result);
+    }
+    
+    for (; i < N; i++) {
+        double a = (i % 2) ? x[i-1] : x[i+1];
+        double b = y[i];
+        
+        __m128d a_vec = _mm_set_sd(a);
+        __m128d rounded_a = _mm_round_sd(a_vec, a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        double ra = _mm_cvtsd_f64(rounded_a);
+        
+        __m128d b_vec = _mm_set_sd(b);
+        __m128d rounded_b = _mm_round_sd(b_vec, b_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        double rb = _mm_cvtsd_f64(rounded_b);
+        
+        z[i] = (ra > rb) ? (a + a * b) : (b - 3 * i);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+15942.7 cycles
+
+Running: maxperformance
+1001.68 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const int vec_size = 4;
+    const __m256d perm_mask = _mm256_permute4x64_pd(_mm256_set_pd(0.0, 0.0, 0.0, 0.0), 0x4e);
+    const __m256d three_vec = _mm256_set1_pd(3.0);
+    const __m256d inc_vec = _mm256_setr_pd(0.0, 1.0, 2.0, 3.0);
+
+    int i;
+    for (i = 0; i + vec_size - 1 < N; i += vec_size) {
+        __m256d vec_x = _mm256_load_pd(&x[i]);
+        __m256d a_vec = _mm256_permute4x64_pd(vec_x, 0x4e);
+        __m256d b_vec = _mm256_load_pd(&y[i]);
+
+        __m256d rounded_a = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(b_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d mask = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OQ);
+
+        __m256d term1 = _mm256_mul_pd(a_vec, _mm256_add_pd(a_vec, b_vec));
+        __m256d indices = _mm256_add_pd(_mm256_set1_pd((double)i), inc_vec);
+        __m256d three_i = _mm256_mul_pd(indices, three_vec);
+        __m256d term2 = _mm256_sub_pd(b_vec, three_i);
+
+        __m256d result = _mm256_blendv_pd(term2, term1, mask);
+        _mm256_store_pd(&z[i], result);
+    }
+
+    for (; i < N; i++) {
+        double a = (i % 2) ? x[i-1] : x[i+1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        } else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+15722.9 cycles
+
+Running: maxperformance
+809.708 cycles
+<<<
+WA
+================================

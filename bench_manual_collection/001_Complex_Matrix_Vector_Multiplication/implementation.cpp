@@ -1,7 +1,7 @@
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance(double *x, double *y, double *z)
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
     for (int i = 0; i < 32; ++i) {
         z[i] = 0.0;
@@ -31,7 +31,7 @@ void slow_performance(double *x, double *y, double *z)
     }
 }
 
-void maxperformance(double *x, double *y, double *z)
+void maxperformance(double *__restrict x, double *__restrict y, double *__restrict z)
 {
     #include <immintrin.h>
     

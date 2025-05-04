@@ -9,7 +9,7 @@
 #define GET_Y(i, j) y[(i) * ON + (j)]
 #define GET_H(i, j) h[(i) * K + (j)]
 
-void slow_performance1(double *x, double *h, double *y)
+void slow_performance1(double *__restrict x, double *__restrict h, double *__restrict y)
 {
     const int ON = N - K + 1;
     for (int i = 0; i < ON; i++)
@@ -28,7 +28,7 @@ void slow_performance1(double *x, double *h, double *y)
     }
 }
 
-void maxperformance(double *x, double *h, double *y)
+void maxperformance(double *__restrict x, double *__restrict h, double *__restrict y)
 {
     const int ON = N - K + 1;
     const double kernel_offset[16] = {

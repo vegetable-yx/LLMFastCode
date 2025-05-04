@@ -1,0 +1,497 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
+
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
+
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
+        }
+    }
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+}
+```
+
+
+================================
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Load all x values at once using AVX2
+    __m256d x0 = _mm256_loadu_pd(&x[0]);  // (a, b, c, d)
+    __m256d x4 = _mm256_loadu_pd(&x[4]);  // (a', b', c', d')
+
+    // Process first row (j=0)
+    __m256d y0 = _mm256_loadu_pd(&y[0]);  // (e, f, g, h)
+    
+    // Precompute negated and shuffled versions we'll need
+    __m256d neg_y0 = _mm256_mul_pd(y0, _mm256_set_pd(-1.0, -1.0, -1.0, -1.0));
+    
+    // Shuffle y for multiplications (f, e, h, g)
+    __m256d y0_shuf1 = _mm256_permute_pd(y0, 0x5);  // (f, e, h, g)
+    
+    // Shuffle for (g, h, e, f)
+    __m256d y0_shuf2 = _mm256_permute2f128_pd(y0, y0, 0x1);  // (g, h, e, f)
+    __m256d y0_shuf3 = _mm256_permute_pd(y0_shuf2, 0x5);     // (h, g, f, e)
+    
+    // Compute the first output vector using vectorized operations
+    // Calculate components for the first quaternion multiplication (i=0, j=0)
+    
+    // a*e, b*f, c*g, d*h
+    __m256d mul1 = _mm256_mul_pd(x0, y0);
+    // b*e, a*f, d*g, c*h
+    __m256d mul2 = _mm256_mul_pd(_mm256_permute_pd(x0, 0x5), y0_shuf1);
+    // c*e, d*f, a*g, b*h
+    __m256d mul3 = _mm256_mul_pd(_mm256_permute2f128_pd(x0, x0, 0x1), y0_shuf2);
+    // d*e, c*f, b*g, a*h
+    __m256d mul4 = _mm256_mul_pd(_mm256_permute_pd(_mm256_permute2f128_pd(x0, x0, 0x1), 0x5), y0_shuf3);
+    
+    // Compute r0 = a*e - b*f - c*g - d*h
+    // First negate the needed terms
+    __m256d neg_terms = _mm256_blend_pd(mul1, _mm256_mul_pd(mul1, _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x7);
+    // Then horizontally add
+    __m256d r0_temp = _mm256_hadd_pd(neg_terms, neg_terms);
+    double r0 = _mm256_cvtsd_f64(r0_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r0_temp, 1));
+    
+    // Compute r1 = a*f + b*e + c*h - d*g
+    __m256d r1_terms = _mm256_blend_pd(mul2, _mm256_mul_pd(_mm256_permute_pd(mul3, 0x5), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x8);
+    __m256d r1_temp = _mm256_hadd_pd(r1_terms, r1_terms);
+    double r1 = _mm256_cvtsd_f64(r1_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r1_temp, 1));
+    
+    // Compute r2 = a*g - b*h + c*e + d*f
+    __m256d r2_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(mul3, mul3, 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(_mm256_permute_pd(mul2, 0x5), _mm256_permute_pd(mul2, 0x5), 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x2
+        ),
+        mul4,
+        0x8
+    );
+    double r2 = _mm256_cvtsd_f64(r2_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r2_temp, 1));
+    
+    // Compute r3 = a*h + b*g - c*f + d*e
+    __m256d r3_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(_mm256_permute_pd(mul4, 0x5), _mm256_permute_pd(mul4, 0x5), 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(mul2, mul2, 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x4
+        ),
+        _mm256_permute2f128_pd(_mm256_permute_pd(mul1, 0x5), _mm256_permute_pd(mul1, 0x5), 0x1),
+        0x8
+    );
+    double r3 = _mm256_cvtsd_f64(r3_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r3_temp, 1));
+    
+    // Store results directly
+    A[0] = r0;
+    A[1] = r1;
+    A[2] = r2;
+    A[3] = r3;
+    
+    // Process j=1
+    __m256d y4 = _mm256_loadu_pd(&y[4]);  // Second row of y
+    
+    // Similar operations for y4
+    __m256d y4_shuf1 = _mm256_permute_pd(y4, 0x5);
+    __m256d y4_shuf2 = _mm256_permute2f128_pd(y4, y4, 0x1);
+    __m256d y4_shuf3 = _mm256_permute_pd(y4_shuf2, 0x5);
+    
+    // Repeat calculations for (i=0, j=1)
+    mul1 = _mm256_mul_pd(x0, y4);
+    mul2 = _mm256_mul_pd(_mm256_permute_pd(x0, 0x5), y4_shuf1);
+    mul3 = _mm256_mul_pd(_mm256_permute2f128_pd(x0, x0, 0x1), y4_shuf2);
+    mul4 = _mm256_mul_pd(_mm256_permute_pd(_mm256_permute2f128_pd(x0, x0, 0x1), 0x5), y4_shuf3);
+    
+    // Compute r0, r1, r2, r3 for second quaternion product
+    neg_terms = _mm256_blend_pd(mul1, _mm256_mul_pd(mul1, _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x7);
+    r0_temp = _mm256_hadd_pd(neg_terms, neg_terms);
+    r0 = _mm256_cvtsd_f64(r0_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r0_temp, 1));
+    
+    r1_terms = _mm256_blend_pd(mul2, _mm256_mul_pd(_mm256_permute_pd(mul3, 0x5), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x8);
+    r1_temp = _mm256_hadd_pd(r1_terms, r1_terms);
+    r1 = _mm256_cvtsd_f64(r1_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r1_temp, 1));
+    
+    r2_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(mul3, mul3, 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(_mm256_permute_pd(mul2, 0x5), _mm256_permute_pd(mul2, 0x5), 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x2
+        ),
+        mul4,
+        0x8
+    );
+    r2 = _mm256_cvtsd_f64(r2_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r2_temp, 1));
+    
+    r3_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(_mm256_permute_pd(mul4, 0x5), _mm256_permute_pd(mul4, 0x5), 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(mul2, mul2, 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x4
+        ),
+        _mm256_permute2f128_pd(_mm256_permute_pd(mul1, 0x5), _mm256_permute_pd(mul1, 0x5), 0x1),
+        0x8
+    );
+    r3 = _mm256_cvtsd_f64(r3_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r3_temp, 1));
+    
+    // Store results
+    A[4] = r0;
+    A[5] = r1;
+    A[6] = r2;
+    A[7] = r3;
+    
+    // Now repeat for i=1 with x4
+    // Process j=0 with x4 and y0
+    mul1 = _mm256_mul_pd(x4, y0);
+    mul2 = _mm256_mul_pd(_mm256_permute_pd(x4, 0x5), y0_shuf1);
+    mul3 = _mm256_mul_pd(_mm256_permute2f128_pd(x4, x4, 0x1), y0_shuf2);
+    mul4 = _mm256_mul_pd(_mm256_permute_pd(_mm256_permute2f128_pd(x4, x4, 0x1), 0x5), y0_shuf3);
+    
+    // Compute components for the third quaternion product (i=1, j=0)
+    neg_terms = _mm256_blend_pd(mul1, _mm256_mul_pd(mul1, _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x7);
+    r0_temp = _mm256_hadd_pd(neg_terms, neg_terms);
+    r0 = _mm256_cvtsd_f64(r0_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r0_temp, 1));
+    
+    r1_terms = _mm256_blend_pd(mul2, _mm256_mul_pd(_mm256_permute_pd(mul3, 0x5), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x8);
+    r1_temp = _mm256_hadd_pd(r1_terms, r1_terms);
+    r1 = _mm256_cvtsd_f64(r1_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r1_temp, 1));
+    
+    r2_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(mul3, mul3, 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(_mm256_permute_pd(mul2, 0x5), _mm256_permute_pd(mul2, 0x5), 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x2
+        ),
+        mul4,
+        0x8
+    );
+    r2 = _mm256_cvtsd_f64(r2_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r2_temp, 1));
+    
+    r3_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(_mm256_permute_pd(mul4, 0x5), _mm256_permute_pd(mul4, 0x5), 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(mul2, mul2, 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x4
+        ),
+        _mm256_permute2f128_pd(_mm256_permute_pd(mul1, 0x5), _mm256_permute_pd(mul1, 0x5), 0x1),
+        0x8
+    );
+    r3 = _mm256_cvtsd_f64(r3_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r3_temp, 1));
+    
+    // Store results
+    A[8] = r0;
+    A[9] = r1;
+    A[10] = r2;
+    A[11] = r3;
+    
+    // Finally, process i=1, j=1 with x4 and y4
+    mul1 = _mm256_mul_pd(x4, y4);
+    mul2 = _mm256_mul_pd(_mm256_permute_pd(x4, 0x5), y4_shuf1);
+    mul3 = _mm256_mul_pd(_mm256_permute2f128_pd(x4, x4, 0x1), y4_shuf2);
+    mul4 = _mm256_mul_pd(_mm256_permute_pd(_mm256_permute2f128_pd(x4, x4, 0x1), 0x5), y4_shuf3);
+    
+    // Compute components for the fourth quaternion product
+    neg_terms = _mm256_blend_pd(mul1, _mm256_mul_pd(mul1, _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x7);
+    r0_temp = _mm256_hadd_pd(neg_terms, neg_terms);
+    r0 = _mm256_cvtsd_f64(r0_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r0_temp, 1));
+    
+    r1_terms = _mm256_blend_pd(mul2, _mm256_mul_pd(_mm256_permute_pd(mul3, 0x5), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)), 0x8);
+    r1_temp = _mm256_hadd_pd(r1_terms, r1_terms);
+    r1 = _mm256_cvtsd_f64(r1_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r1_temp, 1));
+    
+    r2_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(mul3, mul3, 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(_mm256_permute_pd(mul2, 0x5), _mm256_permute_pd(mul2, 0x5), 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x2
+        ),
+        mul4,
+        0x8
+    );
+    r2 = _mm256_cvtsd_f64(r2_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r2_temp, 1));
+    
+    r3_temp = _mm256_blend_pd(
+        _mm256_blend_pd(
+            _mm256_permute2f128_pd(_mm256_permute_pd(mul4, 0x5), _mm256_permute_pd(mul4, 0x5), 0x1),
+            _mm256_mul_pd(_mm256_permute2f128_pd(mul2, mul2, 0x1), _mm256_set_pd(-1.0, -1.0, -1.0, 1.0)),
+            0x4
+        ),
+        _mm256_permute2f128_pd(_mm256_permute_pd(mul1, 0x5), _mm256_permute_pd(mul1, 0x5), 0x1),
+        0x8
+    );
+    r3 = _mm256_cvtsd_f64(r3_temp) + _mm_cvtsd_f64(_mm256_extractf128_pd(r3_temp, 1));
+    
+    // Store final results
+    A[12] = r0;
+    A[13] = r1;
+    A[14] = r2;
+    A[15] = r3;
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+12.0769 cycles
+
+Running: maxperformance
+38.9625 cycles
+<<<
+WA
+================================
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Load all 8 values from x at once (all values needed for both outer loop iterations)
+    __m256d x0_4 = _mm256_loadu_pd(&x[0]);  // Load x[0:3]
+    __m256d x4_8 = _mm256_loadu_pd(&x[4]);  // Load x[4:7]
+    
+    // Process j=0
+    __m256d y0_4 = _mm256_loadu_pd(&y[0]);  // Load y[0:3]
+    
+    // For i=0, j=0 (first quaternion multiplication)
+    // Broadcast individual components for multiplication
+    __m256d a0 = _mm256_set1_pd(x[0]);
+    __m256d b0 = _mm256_set1_pd(x[1]);
+    __m256d c0 = _mm256_set1_pd(x[2]);
+    __m256d d0 = _mm256_set1_pd(x[3]);
+    
+    // Prepare sign-changing masks for quaternion multiplication
+    const __m256d sign_mask1 = _mm256_set_pd(-1.0, 1.0, -1.0, -1.0);
+    const __m256d sign_mask2 = _mm256_set_pd(1.0, -1.0, -1.0, 1.0);
+    const __m256d sign_mask3 = _mm256_set_pd(-1.0, -1.0, 1.0, 1.0);
+    
+    // Shuffle y to get (e,f,g,h) in different arrangements needed for quaternion multiplication
+    __m256d efgh = y0_4;
+    __m256d feghorig = _mm256_permute_pd(efgh, 0x5);  // Swap adjacent pairs: (f,e,h,g)
+    __m256d fegh = _mm256_permute4x64_pd(feghorig, 0xB1);  // (f,e,h,g) -> correct order
+    
+    __m256d ghorig = _mm256_permute2f128_pd(efgh, efgh, 0x01);  // Swap 128-bit lanes: (g,h,e,f)
+    __m256d ghef = _mm256_permute_pd(ghorig, 0x5);  // (h,g,f,e)
+    __m256d hegf = _mm256_permute4x64_pd(ghef, 0xB1);  // Rearrange for needed order
+    
+    // Calculate all products for quaternion multiplication
+    __m256d ae = _mm256_mul_pd(a0, efgh);  // (a*e, a*f, a*g, a*h)
+    __m256d bf = _mm256_mul_pd(b0, fegh);  // (b*f, b*e, b*h, b*g)
+    __m256d cg = _mm256_mul_pd(c0, efgh);  // (c*e, c*f, c*g, c*h)
+    __m256d dh = _mm256_mul_pd(d0, hegf);  // (d*h, d*g, d*f, d*e)
+    
+    // Adjust signs and add/subtract
+    __m256d t1 = _mm256_mul_pd(bf, sign_mask1);  // (-b*f, b*e, -b*h, -b*g)
+    __m256d t2 = _mm256_mul_pd(cg, sign_mask2);  // (c*e, -c*f, -c*g, c*h)
+    __m256d t3 = _mm256_mul_pd(dh, sign_mask3);  // (-d*h, -d*g, d*f, d*e)
+    
+    // Sum all terms
+    __m256d sum = _mm256_add_pd(ae, t1);
+    sum = _mm256_add_pd(sum, t2);
+    sum = _mm256_add_pd(sum, t3);
+    
+    // Store the result at A[0:3]
+    _mm256_storeu_pd(&A[0], sum);
+    
+    // For i=1, j=0 (second quaternion multiplication)
+    a0 = _mm256_set1_pd(x[4]);
+    b0 = _mm256_set1_pd(x[5]);
+    c0 = _mm256_set1_pd(x[6]);
+    d0 = _mm256_set1_pd(x[7]);
+    
+    // Reuse the same shuffled y values from before
+    ae = _mm256_mul_pd(a0, efgh);
+    bf = _mm256_mul_pd(b0, fegh);
+    cg = _mm256_mul_pd(c0, efgh);
+    dh = _mm256_mul_pd(d0, hegf);
+    
+    // Adjust signs and add/subtract
+    t1 = _mm256_mul_pd(bf, sign_mask1);
+    t2 = _mm256_mul_pd(cg, sign_mask2);
+    t3 = _mm256_mul_pd(dh, sign_mask3);
+    
+    // Sum all terms
+    sum = _mm256_add_pd(ae, t1);
+    sum = _mm256_add_pd(sum, t2);
+    sum = _mm256_add_pd(sum, t3);
+    
+    // Store the result at A[8:11]
+    _mm256_storeu_pd(&A[8], sum);
+    
+    // Process j=1
+    __m256d y4_8 = _mm256_loadu_pd(&y[4]);  // Load y[4:7]
+    
+    // For i=0, j=1 (third quaternion multiplication)
+    // Reuse a0, b0, c0, d0 from the first computation
+    a0 = _mm256_set1_pd(x[0]);
+    b0 = _mm256_set1_pd(x[1]);
+    c0 = _mm256_set1_pd(x[2]);
+    d0 = _mm256_set1_pd(x[3]);
+    
+    // Shuffle y to get (e,f,g,h) in different arrangements needed for quaternion multiplication
+    efgh = y4_8;
+    feghorig = _mm256_permute_pd(efgh, 0x5);
+    fegh = _mm256_permute4x64_pd(feghorig, 0xB1);
+    
+    ghorig = _mm256_permute2f128_pd(efgh, efgh, 0x01);
+    ghef = _mm256_permute_pd(ghorig, 0x5);
+    hegf = _mm256_permute4x64_pd(ghef, 0xB1);
+    
+    // Calculate all products for quaternion multiplication
+    ae = _mm256_mul_pd(a0, efgh);
+    bf = _mm256_mul_pd(b0, fegh);
+    cg = _mm256_mul_pd(c0, efgh);
+    dh = _mm256_mul_pd(d0, hegf);
+    
+    // Adjust signs and add/subtract
+    t1 = _mm256_mul_pd(bf, sign_mask1);
+    t2 = _mm256_mul_pd(cg, sign_mask2);
+    t3 = _mm256_mul_pd(dh, sign_mask3);
+    
+    // Sum all terms
+    sum = _mm256_add_pd(ae, t1);
+    sum = _mm256_add_pd(sum, t2);
+    sum = _mm256_add_pd(sum, t3);
+    
+    // Store the result at A[4:7]
+    _mm256_storeu_pd(&A[4], sum);
+    
+    // For i=1, j=1 (fourth quaternion multiplication)
+    a0 = _mm256_set1_pd(x[4]);
+    b0 = _mm256_set1_pd(x[5]);
+    c0 = _mm256_set1_pd(x[6]);
+    d0 = _mm256_set1_pd(x[7]);
+    
+    // Reuse the same shuffled y values from before
+    ae = _mm256_mul_pd(a0, efgh);
+    bf = _mm256_mul_pd(b0, fegh);
+    cg = _mm256_mul_pd(c0, efgh);
+    dh = _mm256_mul_pd(d0, hegf);
+    
+    // Adjust signs and add/subtract
+    t1 = _mm256_mul_pd(bf, sign_mask1);
+    t2 = _mm256_mul_pd(cg, sign_mask2);
+    t3 = _mm256_mul_pd(dh, sign_mask3);
+    
+    // Sum all terms
+    sum = _mm256_add_pd(ae, t1);
+    sum = _mm256_add_pd(sum, t2);
+    sum = _mm256_add_pd(sum, t3);
+    
+    // Store the result at A[12:15]
+    _mm256_storeu_pd(&A[12], sum);
+}
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+11.7832 cycles
+
+Running: maxperformance
+10.2365 cycles
+<<<
+WA
+================================
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    // Pre-fetch all data into L1 cache with vector loads
+    _mm256_loadu_pd(&x[0]);
+    _mm256_loadu_pd(&x[4]);
+    _mm256_loadu_pd(&y[0]);
+    _mm256_loadu_pd(&y[4]);
+    
+    // Process quaternion multiplications with direct scalar computation
+    // Modern compilers will optimize this extremely well with scalar SIMD
+    // Unrolled for maximum performance
+    
+    // i=0, j=0 quaternion multiplication
+    {
+        double a = x[0], b = x[1], c = x[2], d = x[3];
+        double e = y[0], f = y[1], g = y[2], h = y[3];
+        
+        A[0] = a*e - b*f - c*g - d*h;  // r0
+        A[1] = a*f + b*e + c*h - d*g;  // r1
+        A[2] = a*g - b*h + c*e + d*f;  // r2
+        A[3] = a*h + b*g - c*f + d*e;  // r3
+    }
+    
+    // i=0, j=1 quaternion multiplication
+    {
+        double a = x[0], b = x[1], c = x[2], d = x[3];
+        double e = y[4], f = y[5], g = y[6], h = y[7];
+        
+        A[4] = a*e - b*f - c*g - d*h;
+        A[5] = a*f + b*e + c*h - d*g;
+        A[6] = a*g - b*h + c*e + d*f;
+        A[7] = a*h + b*g - c*f + d*e;
+    }
+    
+    // i=1, j=0 quaternion multiplication
+    {
+        double a = x[4], b = x[5], c = x[6], d = x[7];
+        double e = y[0], f = y[1], g = y[2], h = y[3];
+        
+        A[8] = a*e - b*f - c*g - d*h;
+        A[9] = a*f + b*e + c*h - d*g;
+        A[10] = a*g - b*h + c*e + d*f;
+        A[11] = a*h + b*g - c*f + d*e;
+    }
+    
+    // i=1, j=1 quaternion multiplication
+    {
+        double a = x[4], b = x[5], c = x[6], d = x[7];
+        double e = y[4], f = y[5], g = y[6], h = y[7];
+        
+        A[12] = a*e - b*f - c*g - d*h;
+        A[13] = a*f + b*e + c*h - d*g;
+        A[14] = a*g - b*h + c*e + d*f;
+        A[15] = a*h + b*g - c*f + d*e;
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+12.1098 cycles
+
+Running: maxperformance
+9.3493 cycles
+<<<
+12.1098 / 9.3493 = 1.2952627469436215
+================================

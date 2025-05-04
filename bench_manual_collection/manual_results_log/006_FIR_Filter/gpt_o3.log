@@ -1,0 +1,228 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// Precondition: n = 1024, m = 4
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    for (int i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (int k = 0; k < m; ++k)
+        {
+            int x_index = i + (m - 1) - k;
+            sum += (i + k + 1) * h[k] * std::abs(x[x_index]);
+        }
+        y[i] = sum;
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    const __m256d mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7fffffffffffffffULL));
+    const __m256d h0 = _mm256_set1_pd(h[0]);
+    const __m256d h1 = _mm256_set1_pd(h[1]);
+    const __m256d h2 = _mm256_set1_pd(h[2]);
+    const __m256d h3 = _mm256_set1_pd(h[3]);
+    const __m256d one   = _mm256_set1_pd(1.0);
+    const __m256d two   = _mm256_set1_pd(2.0);
+    const __m256d three = _mm256_set1_pd(3.0);
+    const __m256d four  = _mm256_set1_pd(4.0);
+    const __m256d step4 = _mm256_set1_pd(4.0);
+
+    __m256d idx = _mm256_set_pd(3.0, 2.0, 1.0, 0.0);
+
+    int vec_end = (n >= 8) ? (n - 8) : -1;
+    int i = 0;
+
+    for (; i <= vec_end; i += 4)
+    {
+        __m256d c0 = _mm256_mul_pd(_mm256_add_pd(idx, one),   h0);
+        __m256d c1 = _mm256_mul_pd(_mm256_add_pd(idx, two),   h1);
+        __m256d c2 = _mm256_mul_pd(_mm256_add_pd(idx, three), h2);
+        __m256d c3 = _mm256_mul_pd(_mm256_add_pd(idx, four),  h3);
+
+        __m256d a0 = _mm256_and_pd(_mm256_loadu_pd(x + i    ), mask);
+        __m256d a1 = _mm256_and_pd(_mm256_loadu_pd(x + i + 1), mask);
+        __m256d a2 = _mm256_and_pd(_mm256_loadu_pd(x + i + 2), mask);
+        __m256d a3 = _mm256_and_pd(_mm256_loadu_pd(x + i + 3), mask);
+
+        __m256d sum = _mm256_mul_pd(c0, a3);
+        sum         = _mm256_fmadd_pd(c1, a2, sum);
+        sum         = _mm256_fmadd_pd(c2, a1, sum);
+        sum         = _mm256_fmadd_pd(c3, a0, sum);
+
+        _mm256_storeu_pd(y + i, sum);
+
+        idx = _mm256_add_pd(idx, step4);
+    }
+
+    for (; i < n; ++i)
+    {
+        double s = 0.0;
+        for (int k = 0; k < m; ++k)
+        {
+            int x_index = i + (m - 1) - k;
+            s += (i + k + 1) * h[k] * std::abs(x[x_index]);
+        }
+        y[i] = s;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+6190.29 cycles
+
+Running: maxperformance
+852.279 cycles
+<<<
+6190.29 / 852.279 = 7.263220142699749
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int /*m*/)
+{
+    const __m256d mask   = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7FFFFFFFFFFFFFFFLL));
+    const __m256d vh0    = _mm256_set1_pd(h[0]);
+    const __m256d vh1    = _mm256_set1_pd(h[1]);
+    const __m256d vh2    = _mm256_set1_pd(h[2]);
+    const __m256d vh3    = _mm256_set1_pd(h[3]);
+    const __m256d vone   = _mm256_set1_pd(1.0);
+    const __m256d vtwo   = _mm256_set1_pd(2.0);
+    const __m256d vthree = _mm256_set1_pd(3.0);
+    const __m256d vfour  = _mm256_set1_pd(4.0);
+    const __m256d vincr  = _mm256_set1_pd(4.0);
+
+    int i = 0;
+    __m256d vi = _mm256_setr_pd(0.0, 1.0, 2.0, 3.0);
+
+    for (; i <= n - 4; i += 4)
+    {
+        __m256d sum = _mm256_setzero_pd();
+
+        __m256d vx  = _mm256_loadu_pd(x + i + 3);
+        vx           = _mm256_and_pd(vx, mask);
+        __m256d fac  = _mm256_mul_pd(_mm256_add_pd(vi, vone), vh0);
+        sum          = _mm256_fmadd_pd(fac, vx, sum);
+
+        vx           = _mm256_loadu_pd(x + i + 2);
+        vx           = _mm256_and_pd(vx, mask);
+        fac          = _mm256_mul_pd(_mm256_add_pd(vi, vtwo), vh1);
+        sum          = _mm256_fmadd_pd(fac, vx, sum);
+
+        vx           = _mm256_loadu_pd(x + i + 1);
+        vx           = _mm256_and_pd(vx, mask);
+        fac          = _mm256_mul_pd(_mm256_add_pd(vi, vthree), vh2);
+        sum          = _mm256_fmadd_pd(fac, vx, sum);
+
+        vx           = _mm256_loadu_pd(x + i);
+        vx           = _mm256_and_pd(vx, mask);
+        fac          = _mm256_mul_pd(_mm256_add_pd(vi, vfour), vh3);
+        sum          = _mm256_fmadd_pd(fac, vx, sum);
+
+        _mm256_storeu_pd(y + i, sum);
+        vi = _mm256_add_pd(vi, vincr);
+    }
+
+    for (; i < n; ++i)
+    {
+        double sum = 0.0;
+        sum += (i + 1) * h[0] * std::abs(x[i + 3]);
+        sum += (i + 2) * h[1] * std::abs(x[i + 2]);
+        sum += (i + 3) * h[2] * std::abs(x[i + 1]);
+        sum += (i + 4) * h[3] * std::abs(x[i]);
+        y[i] = sum;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+6138.39 cycles
+
+Running: maxperformance
+829.1 cycles
+<<<
+6138.39 / 829.1 = 7.403678687733687
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict h, int n, int m)
+{
+    const __m256d absMask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x7FFFFFFFFFFFFFFFLL));
+
+    const __m256d h0 = _mm256_set1_pd(h[0]);
+    const __m256d h1 = _mm256_set1_pd(h[1]);
+    const __m256d h2 = _mm256_set1_pd(h[2]);
+    const __m256d h3 = _mm256_set1_pd(h[3]);
+
+    int i = 0;
+    for (; i <= n - 4; i += 4)
+    {
+        const __m256d base = _mm256_setr_pd((double)i, (double)(i + 1), (double)(i + 2), (double)(i + 3));
+        __m256d sum = _mm256_setzero_pd();
+
+        __m256d x0 = _mm256_loadu_pd(x + i + 3);
+        x0 = _mm256_and_pd(x0, absMask);
+        sum = _mm256_fmadd_pd(_mm256_mul_pd(h0, x0), _mm256_add_pd(base, _mm256_set1_pd(1.0)), sum);
+
+        __m256d x1 = _mm256_loadu_pd(x + i + 2);
+        x1 = _mm256_and_pd(x1, absMask);
+        sum = _mm256_fmadd_pd(_mm256_mul_pd(h1, x1), _mm256_add_pd(base, _mm256_set1_pd(2.0)), sum);
+
+        __m256d x2 = _mm256_loadu_pd(x + i + 1);
+        x2 = _mm256_and_pd(x2, absMask);
+        sum = _mm256_fmadd_pd(_mm256_mul_pd(h2, x2), _mm256_add_pd(base, _mm256_set1_pd(3.0)), sum);
+
+        __m256d x3 = _mm256_loadu_pd(x + i);
+        x3 = _mm256_and_pd(x3, absMask);
+        sum = _mm256_fmadd_pd(_mm256_mul_pd(h3, x3), _mm256_add_pd(base, _mm256_set1_pd(4.0)), sum);
+
+        _mm256_storeu_pd(y + i, sum);
+    }
+
+    for (; i < n; ++i)
+    {
+        double sum = 0.0;
+        sum += (i + 1) * h[0] * std::abs(x[i + 3]);
+        sum += (i + 2) * h[1] * std::abs(x[i + 2]);
+        sum += (i + 3) * h[2] * std::abs(x[i + 1]);
+        sum += (i + 4) * h[3] * std::abs(x[i]);
+        y[i] = sum;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+6089.85 cycles
+
+Running: maxperformance
+1383.09 cycles
+<<<
+6089.85 / 1383.09 = 4.403075721753465
+================================

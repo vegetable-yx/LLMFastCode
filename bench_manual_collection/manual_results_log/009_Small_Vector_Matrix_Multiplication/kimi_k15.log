@@ -1,0 +1,202 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include "common.h"
+#include <immintrin.h>
+#include <math.h>
+
+#define NC 32
+#define NR 64
+
+void slow_performance1(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
+
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include "common.h"
+#include <immintrin.h>
+
+#define NC 32
+#define NR 64
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y) {
+    alignas(32) double temp[NC] = {0.0};
+    
+    for (int i = 0; i < NR; ++i) {
+        const double xi = x[i];
+        const __m256d vec_xi = _mm256_broadcast_sd(&xi);
+        
+        __m256d a0 = _mm256_load_pd(&A[i*NC + 0]);
+        __m256d a1 = _mm256_load_pd(&A[i*NC + 4]);
+        __m256d a2 = _mm256_load_pd(&A[i*NC + 8]);
+        __m256d a3 = _mm256_load_pd(&A[i*NC +12]);
+        __m256d a4 = _mm256_load_pd(&A[i*NC +16]);
+        __m256d a5 = _mm256_load_pd(&A[i*NC +20]);
+        __m256d a6 = _mm256_load_pd(&A[i*NC +24]);
+        __m256d a7 = _mm256_load_pd(&A[i*NC +28]);
+        
+        __m256d product0 = _mm256_mul_pd(a0, vec_xi);
+        __m256d product1 = _mm256_mul_pd(a1, vec_xi);
+        __m256d product2 = _mm256_mul_pd(a2, vec_xi);
+        __m256d product3 = _mm256_mul_pd(a3, vec_xi);
+        __m256d product4 = _mm256_mul_pd(a4, vec_xi);
+        __m256d product5 = _mm256_mul_pd(a5, vec_xi);
+        __m256d product6 = _mm256_mul_pd(a6, vec_xi);
+        __m256d product7 = _mm256_mul_pd(a7, vec_xi);
+        
+        __m256d t0 = _mm256_load_pd(&temp[0]);
+        __m256d t1 = _mm256_load_pd(&temp[4]);
+        __m256d t2 = _mm256_load_pd(&temp[8]);
+        __m256d t3 = _mm256_load_pd(&temp[12]);
+        __m256d t4 = _mm256_load_pd(&temp[16]);
+        __m256d t5 = _mm256_load_pd(&temp[20]);
+        __m256d t6 = _mm256_load_pd(&temp[24]);
+        __m256d t7 = _mm256_load_pd(&temp[28]);
+        
+        t0 = _mm256_add_pd(t0, product0);
+        t1 = _mm256_add_pd(t1, product1);
+        t2 = _mm256_add_pd(t2, product2);
+        t3 = _mm256_add_pd(t3, product3);
+        t4 = _mm256_add_pd(t4, product4);
+        t5 = _mm256_add_pd(t5, product5);
+        t6 = _mm256_add_pd(t6, product6);
+        t7 = _mm256_add_pd(t7, product7);
+        
+        _mm256_store_pd(&temp[0], t0);
+        _mm256_store_pd(&temp[4], t1);
+        _mm256_store_pd(&temp[8], t2);
+        _mm256_store_pd(&temp[12], t3);
+        _mm256_store_pd(&temp[16], t4);
+        _mm256_store_pd(&temp[20], t5);
+        _mm256_store_pd(&temp[24], t6);
+        _mm256_store_pd(&temp[28], t7);
+    }
+    
+    for (int j = 0; j < NC; j += 4) {
+        __m256d t = _mm256_load_pd(&temp[j]);
+        _mm256_store_pd(&y[j], t);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+208.933 cycles
+
+Running: maxperformance
+241.194 cycles
+<<<
+0.8662445997827475
+================================
+#include "common.h"
+#include <immintrin.h>
+
+#define NC 32
+#define NR 64
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y) {
+    // Initialize y to zero using AVX2
+    for (int j = 0; j < NC; j += 4) {
+        _mm256_store_pd(&y[j], _mm256_setzero_pd());
+    }
+
+    // Process each j chunk of 4 elements with AVX2
+    for (int j = 0; j < NC; j += 4) {
+        __m256d y_vec = _mm256_load_pd(&y[j]); // Initially zero
+
+        for (int i = 0; i < NR; ++i) {
+            __m256d a_vec = _mm256_load_pd(&A[i * NC + j]);
+            __m256d x_vec = _mm256_set1_pd(x[i]);
+            y_vec = _mm256_add_pd(y_vec, _mm256_mul_pd(a_vec, x_vec));
+        }
+
+        _mm256_store_pd(&y[j], y_vec);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+209.401 cycles
+
+Running: maxperformance
+444.604 cycles
+<<<
+
+================================
+#include "common.h"
+#include <immintrin.h>
+#include <math.h>
+
+#define NC 32
+#define NR 64
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+    // Initialize y to zero using AVX-2 vectors
+    for (int j = 0; j < NC; j += 4) {
+        __m256d zero = _mm256_setzero_pd();
+        _mm256_store_pd(y + j, zero);
+    }
+
+    // Process each group of 4 columns using AVX-2 vectorization
+    for (int j = 0; j < NC; j += 4) {
+        __m256d accum = _mm256_setzero_pd(); // Initialize accumulator
+
+        // Iterate over each row of matrix A
+        for (int i = 0; i < NR; ++i) {
+            // Load 4 elements from current row of A (contiguous in memory)
+            __m256d a = _mm256_load_pd(A + i * NC + j);
+            // Broadcast x[i] to all lanes of a vector
+            double xi = x[i];
+            __m256d xi_vec = _mm256_set1_pd(xi);
+            // Multiply and accumulate
+            accum = _mm256_add_pd(accum, _mm256_mul_pd(a, xi_vec));
+        }
+
+        // Store accumulated results back to y
+        _mm256_store_pd(y + j, accum);
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+209.402 cycles
+
+Running: maxperformance
+442.644 cycles
+<<<
+
+================================

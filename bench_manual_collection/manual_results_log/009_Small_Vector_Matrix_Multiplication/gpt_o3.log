@@ -1,0 +1,211 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include "common.h"
+#include <immintrin.h>
+#include <math.h>
+
+#define NC 32
+#define NR 64
+
+void slow_performance1(double *__restrict x __attribute__((aligned(32))), double *__restrict A __attribute__((aligned(32))), double *__restrict y __attribute__((aligned(32))))
+{
+    for (int j = 0; j < NC; j++)
+        y[j] = 0;
+
+    for (int i = 0; i < NR; i++)
+    {
+        for (int j = 0; j < NC; j++)
+        {
+            y[j] += A[i * NC + j] * x[i];
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict A, double *__restrict y)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x __attribute__((aligned(32))),
+                     double *__restrict A __attribute__((aligned(32))),
+                     double *__restrict y __attribute__((aligned(32))))
+{
+    __m256d acc0 = _mm256_setzero_pd();
+    __m256d acc1 = _mm256_setzero_pd();
+    __m256d acc2 = _mm256_setzero_pd();
+    __m256d acc3 = _mm256_setzero_pd();
+    __m256d acc4 = _mm256_setzero_pd();
+    __m256d acc5 = _mm256_setzero_pd();
+    __m256d acc6 = _mm256_setzero_pd();
+    __m256d acc7 = _mm256_setzero_pd();
+
+    for (int i = 0; i < NR; ++i)
+    {
+        __m256d xv = _mm256_set1_pd(x[i]);
+        const double *row = A + i * NC;
+
+        acc0 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 0),  acc0);
+        acc1 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 4),  acc1);
+        acc2 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 8),  acc2);
+        acc3 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 12), acc3);
+        acc4 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 16), acc4);
+        acc5 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 20), acc5);
+        acc6 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 24), acc6);
+        acc7 = _mm256_fmadd_pd(xv, _mm256_load_pd(row + 28), acc7);
+    }
+
+    _mm256_store_pd(y + 0,  acc0);
+    _mm256_store_pd(y + 4,  acc1);
+    _mm256_store_pd(y + 8,  acc2);
+    _mm256_store_pd(y + 12, acc3);
+    _mm256_store_pd(y + 16, acc4);
+    _mm256_store_pd(y + 20, acc5);
+    _mm256_store_pd(y + 24, acc6);
+    _mm256_store_pd(y + 28, acc7);
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+209.639 cycles
+
+Running: maxperformance
+209.095 cycles
+<<<
+209.639 / 209.095 = 1.002601688227839
+================================
+**Optimizing matrix-vector product**
+
+The user wants the function to compute the matrix-vector product y = A^T x efficiently, where A is an NR x NC matrix, based on given size parameters NR=64 and NC=32. The original approach loops over rows and columns; however, the optimized version can use AVX2 instructions for better performance with 256-bit registers handling 4 doubles at a time. The objective is to vectorize the computation for the matrix transpose (A^T) and to optimize memory accesses for faster results.
+
+**Optimizing vector computation**
+
+I’m aiming to optimize the computation of y = A^T x by vectorizing across the rows (i dimension). Instead of accumulating all 32 outputs in one go, I'll compute groups of 4 outputs at a time. By using 8 registers, each holding partial accumulations, I can keep within the AVX2 register limit. I'll broadcast the x values and load A’s rows into 8 registers for accumulation, avoiding unnecessary memory writes. After the computation, I’ll store the results efficiently, ensuring proper alignment. The key is perfecting the looping and register usage for speed.
+
+**Optimizing matrix-vector multiplication**
+
+The task is to optimize matrix-vector multiplication using AVX2 instructions. I employ fused multiply-adds (\_mm256\_fmadd\_pd) to accumulate values efficiently, broadcasting x\[i] into a vector register to multiply with A’s row values. I've ensured that memory accesses are aligned and leveraged FMA instructions on an Intel Core ULTRA-7 265K processor, ensuring high performance. The results will be stored directly, as no memory initialization for y is needed, allowing a streamlined solution without additional setup. The main goal is to stay within floating-point error tolerance.
+
+
+Thought for 36 seconds
+
+
+```cpp
+void max_performance(double *__restrict x __attribute__((aligned(32))),
+                     double *__restrict A __attribute__((aligned(32))),
+                     double *__restrict y __attribute__((aligned(32))))
+{
+    __m256d y0 = _mm256_setzero_pd();
+    __m256d y1 = _mm256_setzero_pd();
+    __m256d y2 = _mm256_setzero_pd();
+    __m256d y3 = _mm256_setzero_pd();
+    __m256d y4 = _mm256_setzero_pd();
+    __m256d y5 = _mm256_setzero_pd();
+    __m256d y6 = _mm256_setzero_pd();
+    __m256d y7 = _mm256_setzero_pd();
+
+    for (int i = 0; i < NR; ++i)
+    {
+        __m256d xv = _mm256_broadcast_sd(x + i);
+        double *a   = A + i * NC;
+
+        y0 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 0),  y0);
+        y1 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 4),  y1);
+        y2 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 8),  y2);
+        y3 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 12), y3);
+        y4 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 16), y4);
+        y5 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 20), y5);
+        y6 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 24), y6);
+        y7 = _mm256_fmadd_pd(xv, _mm256_load_pd(a + 28), y7);
+    }
+
+    _mm256_store_pd(y + 0,  y0);
+    _mm256_store_pd(y + 4,  y1);
+    _mm256_store_pd(y + 8,  y2);
+    _mm256_store_pd(y + 12, y3);
+    _mm256_store_pd(y + 16, y4);
+    _mm256_store_pd(y + 20, y5);
+    _mm256_store_pd(y + 24, y6);
+    _mm256_store_pd(y + 28, y7);
+}
+```
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+211.725 cycles
+
+Running: maxperformance
+207.895 cycles
+<<<
+211.725 / 207.895 = 1.0184227614901753
+================================
+void max_performance(double *__restrict x __attribute__((aligned(32))),
+                     double *__restrict A __attribute__((aligned(32))),
+                     double *__restrict y __attribute__((aligned(32))))
+{
+    __m256d y0 = _mm256_setzero_pd();
+    __m256d y1 = _mm256_setzero_pd();
+    __m256d y2 = _mm256_setzero_pd();
+    __m256d y3 = _mm256_setzero_pd();
+    __m256d y4 = _mm256_setzero_pd();
+    __m256d y5 = _mm256_setzero_pd();
+    __m256d y6 = _mm256_setzero_pd();
+    __m256d y7 = _mm256_setzero_pd();
+
+    for (int i = 0; i < NR; ++i)
+    {
+        __m256d xi = _mm256_broadcast_sd(x + i);
+        const double *row = A + i * NC;
+
+        y0 = _mm256_fmadd_pd(_mm256_load_pd(row + 0),  xi, y0);
+        y1 = _mm256_fmadd_pd(_mm256_load_pd(row + 4),  xi, y1);
+        y2 = _mm256_fmadd_pd(_mm256_load_pd(row + 8),  xi, y2);
+        y3 = _mm256_fmadd_pd(_mm256_load_pd(row + 12), xi, y3);
+        y4 = _mm256_fmadd_pd(_mm256_load_pd(row + 16), xi, y4);
+        y5 = _mm256_fmadd_pd(_mm256_load_pd(row + 20), xi, y5);
+        y6 = _mm256_fmadd_pd(_mm256_load_pd(row + 24), xi, y6);
+        y7 = _mm256_fmadd_pd(_mm256_load_pd(row + 28), xi, y7);
+    }
+
+    _mm256_store_pd(y + 0,  y0);
+    _mm256_store_pd(y + 4,  y1);
+    _mm256_store_pd(y + 8,  y2);
+    _mm256_store_pd(y + 12, y3);
+    _mm256_store_pd(y + 16, y4);
+    _mm256_store_pd(y + 20, y5);
+    _mm256_store_pd(y + 24, y6);
+    _mm256_store_pd(y + 28, y7);
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+209.197 cycles
+
+Running: maxperformance
+208.161 cycles
+<<<
+209.197 / 208.161 = 1.0049769169056644
+================================

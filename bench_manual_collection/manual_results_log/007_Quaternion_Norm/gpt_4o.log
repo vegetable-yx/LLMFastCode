@@ -1,0 +1,254 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y)
+{
+    const double _c[4] = {2.0, 5.0, 0.25, 0.75};
+    const double c0 = _c[0], c1 = _c[1], c2 = _c[2], c3 = _c[3];
+    for (size_t i = 0; i < N; ++i)
+    {
+        double *xi = &(x[i * 4]);
+        double a = c0 * xi[0] - c1 * xi[1] - c2 * xi[2] - c3 * xi[3];
+        double b = c0 * xi[1] + c1 * xi[0] + c2 * xi[3] - c3 * xi[2];
+        double c = c0 * xi[2] - c1 * xi[3] + c2 * xi[0] + c3 * xi[1];
+        double d = c0 * xi[3] + c1 * xi[2] - c2 * xi[1] + c3 * xi[0];
+        y[i] = a * a + b * b + c * c + d * d;
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m256d c0 = _mm256_set1_pd(2.0);
+    const __m256d c1 = _mm256_set1_pd(5.0);
+    const __m256d c2 = _mm256_set1_pd(0.25);
+    const __m256d c3 = _mm256_set1_pd(0.75);
+
+    for (size_t i = 0; i < N; ++i)
+    {
+        __m256d xi = _mm256_load_pd(&x[i * 4]);
+
+        __m128d lo = _mm256_castpd256_pd128(xi);
+        __m128d hi = _mm256_extractf128_pd(xi, 1);
+
+        __m128d x0 = _mm_permute_pd(lo, 0x0);  // [x0 x0]
+        __m128d x1 = _mm_permute_pd(lo, 0x3);  // [x1 x1]
+        __m128d x2 = _mm_permute_pd(hi, 0x0);  // [x2 x2]
+        __m128d x3 = _mm_permute_pd(hi, 0x3);  // [x3 x3]
+
+        __m128d a = _mm_add_pd(
+            _mm_sub_pd(_mm_mul_pd(_mm256_castpd256_pd128(c0), x0),
+                       _mm_add_pd(_mm_mul_pd(_mm256_castpd256_pd128(c1), x1),
+                                  _mm_add_pd(_mm_mul_pd(_mm256_castpd256_pd128(c2), x2),
+                                             _mm_mul_pd(_mm256_castpd256_pd128(c3), x3)))),
+            _mm_setzero_pd());
+
+        __m128d b = _mm_add_pd(
+            _mm_add_pd(_mm_mul_pd(_mm256_castpd256_pd128(c0), x1),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c1), x0)),
+            _mm_sub_pd(_mm_mul_pd(_mm256_castpd256_pd128(c2), x3),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c3), x2)));
+
+        __m128d c = _mm_add_pd(
+            _mm_add_pd(_mm_mul_pd(_mm256_castpd256_pd128(c0), x2),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c3), x1)),
+            _mm_sub_pd(_mm_mul_pd(_mm256_castpd256_pd128(c2), x0),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c1), x3)));
+
+        __m128d d = _mm_add_pd(
+            _mm_add_pd(_mm_mul_pd(_mm256_castpd256_pd128(c0), x3),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c3), x0)),
+            _mm_sub_pd(_mm_mul_pd(_mm256_castpd256_pd128(c1), x2),
+                       _mm_mul_pd(_mm256_castpd256_pd128(c2), x1)));
+
+        __m128d a2 = _mm_mul_pd(a, a);
+        __m128d b2 = _mm_mul_pd(b, b);
+        __m128d c2_ = _mm_mul_pd(c, c);
+        __m128d d2 = _mm_mul_pd(d, d);
+
+        __m128d sum1 = _mm_add_pd(a2, b2);
+        __m128d sum2 = _mm_add_pd(c2_, d2);
+        __m128d total = _mm_add_pd(sum1, sum2);
+
+        y[i] = ((double*)&total)[0];
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+1978.31 cycles
+
+Running: max_performance
+7416.78 cycles
+<<<
+1978.31 / 7416.78 = 0.26673435102564724
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m256d c0 = _mm256_set1_pd(2.0);
+    const __m256d c1 = _mm256_set1_pd(5.0);
+    const __m256d c2 = _mm256_set1_pd(0.25);
+    const __m256d c3 = _mm256_set1_pd(0.75);
+
+    for (size_t i = 0; i < N; ++i)
+    {
+        __m256d xi = _mm256_load_pd(&x[i * 4]);
+
+        // Shuffle for computing a, b, c, d using SIMD lanes
+        __m256d x0 = _mm256_permute4x64_pd(xi, 0b00000000); // [x0 x0 x0 x0]
+        __m256d x1 = _mm256_permute4x64_pd(xi, 0b01010101); // [x1 x1 x1 x1]
+        __m256d x2 = _mm256_permute4x64_pd(xi, 0b10101010); // [x2 x2 x2 x2]
+        __m256d x3 = _mm256_permute4x64_pd(xi, 0b11111111); // [x3 x3 x3 x3]
+
+        __m256d a = _mm256_fmadd_pd(c0, x0, _mm256_setzero_pd()); // c0 * x0
+        a = _mm256_fnmadd_pd(c1, x1, a);                          // - c1 * x1
+        a = _mm256_fnmadd_pd(c2, x2, a);                          // - c2 * x2
+        a = _mm256_fnmadd_pd(c3, x3, a);                          // - c3 * x3
+
+        __m256d b = _mm256_fmadd_pd(c0, x1, _mm256_setzero_pd()); // c0 * x1
+        b = _mm256_fmadd_pd(c1, x0, b);                           // + c1 * x0
+        b = _mm256_fmadd_pd(c2, x3, b);                           // + c2 * x3
+        b = _mm256_fnmadd_pd(c3, x2, b);                          // - c3 * x2
+
+        __m256d c = _mm256_fmadd_pd(c0, x2, _mm256_setzero_pd()); // c0 * x2
+        c = _mm256_fnmadd_pd(c1, x3, c);                          // - c1 * x3
+        c = _mm256_fmadd_pd(c2, x0, c);                           // + c2 * x0
+        c = _mm256_fmadd_pd(c3, x1, c);                           // + c3 * x1
+
+        __m256d d = _mm256_fmadd_pd(c0, x3, _mm256_setzero_pd()); // c0 * x3
+        d = _mm256_fmadd_pd(c1, x2, d);                           // + c1 * x2
+        d = _mm256_fnmadd_pd(c2, x1, d);                          // - c2 * x1
+        d = _mm256_fmadd_pd(c3, x0, d);                           // + c3 * x0
+
+        __m256d aa = _mm256_mul_pd(a, a);
+        __m256d bb = _mm256_mul_pd(b, b);
+        __m256d cc = _mm256_mul_pd(c, c);
+        __m256d dd = _mm256_mul_pd(d, d);
+
+        __m256d sum = _mm256_add_pd(aa, bb);
+        sum = _mm256_add_pd(sum, cc);
+        sum = _mm256_add_pd(sum, dd);
+
+        __m128d low = _mm256_castpd256_pd128(sum);
+        __m128d high = _mm256_extractf128_pd(sum, 1);
+        __m128d sum2 = _mm_add_pd(low, high);
+        double result = ((double*)&sum2)[0] + ((double*)&sum2)[1];
+        y[i] = result;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+1976.7 cycles
+
+Running: max_performance
+7468.48 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y)
+{
+    const __m256d c0 = _mm256_set1_pd(2.0);
+    const __m256d c1 = _mm256_set1_pd(5.0);
+    const __m256d c2 = _mm256_set1_pd(0.25);
+    const __m256d c3 = _mm256_set1_pd(0.75);
+
+    for (size_t i = 0; i < N; ++i)
+    {
+        __m256d xi = _mm256_load_pd(&x[i * 4]);
+
+        __m256d x0 = _mm256_permute4x64_pd(xi, 0x00); // {x0, x0, x0, x0}
+        __m256d x1 = _mm256_permute4x64_pd(xi, 0x55); // {x1, x1, x1, x1}
+        __m256d x2 = _mm256_permute4x64_pd(xi, 0xAA); // {x2, x2, x2, x2}
+        __m256d x3 = _mm256_permute4x64_pd(xi, 0xFF); // {x3, x3, x3, x3}
+
+        // Compute a, b, c, d in parallel
+        __m256d a = _mm256_fmadd_pd(c0, x0, _mm256_setzero_pd());
+        a = _mm256_fnmadd_pd(c1, x1, a);
+        a = _mm256_fnmadd_pd(c2, x2, a);
+        a = _mm256_fnmadd_pd(c3, x3, a);
+
+        __m256d b = _mm256_fmadd_pd(c0, x1, _mm256_setzero_pd());
+        b = _mm256_fmadd_pd(c1, x0, b);
+        b = _mm256_fmadd_pd(c2, x3, b);
+        b = _mm256_fnmadd_pd(c3, x2, b);
+
+        __m256d c = _mm256_fmadd_pd(c0, x2, _mm256_setzero_pd());
+        c = _mm256_fnmadd_pd(c1, x3, c);
+        c = _mm256_fmadd_pd(c2, x0, c);
+        c = _mm256_fmadd_pd(c3, x1, c);
+
+        __m256d d = _mm256_fmadd_pd(c0, x3, _mm256_setzero_pd());
+        d = _mm256_fmadd_pd(c1, x2, d);
+        d = _mm256_fnmadd_pd(c2, x1, d);
+        d = _mm256_fmadd_pd(c3, x0, d);
+
+        __m256d aa = _mm256_mul_pd(a, a);
+        __m256d bb = _mm256_mul_pd(b, b);
+        __m256d cc = _mm256_mul_pd(c, c);
+        __m256d dd = _mm256_mul_pd(d, d);
+
+        __m256d sum = _mm256_add_pd(aa, bb);
+        sum = _mm256_add_pd(sum, cc);
+        sum = _mm256_add_pd(sum, dd);
+
+        // Horizontal add to get scalar y[i]
+        __m128d low = _mm256_castpd256_pd128(sum);
+        __m128d high = _mm256_extractf128_pd(sum, 1);
+        __m128d tmp = _mm_add_pd(low, high);
+        tmp = _mm_hadd_pd(tmp, tmp);
+        _mm_store_sd(&y[i], tmp);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+2081.42 cycles
+
+Running: max_performance
+7505.07 cycles
+<<<
+WA
+================================

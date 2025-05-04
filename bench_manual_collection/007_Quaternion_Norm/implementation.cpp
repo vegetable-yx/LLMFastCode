@@ -4,7 +4,7 @@
 
 #define N 1024
 // x, y, z are __attribute__((aligned(32)))
-void slow_performance1(double *x, double *y)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
     const double _c[4] = {2.0, 5.0, 0.25, 0.75};
     const double c0 = _c[0], c1 = _c[1], c2 = _c[2], c3 = _c[3];
@@ -20,7 +20,7 @@ void slow_performance1(double *x, double *y)
 }
 
 // x, y, z are __attribute__((aligned(32)))
-void maxperformance(double *x, double *y)
+void maxperformance(double *__restrict x, double *__restrict y)
 {
     const double norm2_q = 29.625;
     __m256d coeff = _mm256_set1_pd(norm2_q);

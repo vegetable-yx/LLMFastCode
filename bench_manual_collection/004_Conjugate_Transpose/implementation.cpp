@@ -1,7 +1,7 @@
 #include <immintrin.h>
 #include "common.h"
 
-void slow_performance1(double *x, double *y)
+void slow_performance1(double *__restrict x, double *__restrict y)
 {
     for (int i = 0; i < 4; i++)
     {
@@ -15,7 +15,7 @@ void slow_performance1(double *x, double *y)
     }
 }
 
-void maxperformance(double *x, double *y)
+void maxperformance(double *__restrict x, double *__restrict y)
 {
     __m256d sign_mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
     for (int i = 0; i < 2; i++)

@@ -1,0 +1,139 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d ymm0, ymm1, ymm2, ymm3, ymm4, ymm5, ymm6, ymm7;
+    int i;
+    for (i = 0; i < N - 3; i += 4) {
+        ymm0 = _mm256_load_pd(&x[i]);
+        ymm1 = _mm256_load_pd(&x[i + 1]);
+        ymm2 = _mm256_blend_pd(ymm0, ymm1, 0xAA);
+        ymm1 = _mm256_load_pd(&y[i]);
+        ymm3 = _mm256_round_pd(ymm2, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        ymm4 = _mm256_round_pd(ymm1, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        ymm5 = _mm256_cmp_pd(ymm3, ymm4, _CMP_GT_OQ);
+        ymm6 = _mm256_mul_pd(ymm2, ymm1);
+        ymm6 = _mm256_add_pd(ymm2, ymm6);
+        ymm7 = _mm256_set1_pd(3.0);
+        ymm7 = _mm256_fmadd_pd(ymm7, _mm256_set_pd(i + 3, i + 2, i + 1, i), ymm1);
+        ymm6 = _mm256_blendv_pd(ymm7, ymm6, ymm5);
+        _mm256_store_pd(&z[i], ymm6);
+    }
+    for (; i < N; i++) {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b)) {
+            z[i] = a + a * b;
+        } else {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d one = _mm256_set1_pd(1.0);
+    __m256d three = _mm256_set1_pd(3.0);
+
+    for (int i = 0; i < N; i += 4) {
+        __m256d xi = _mm256_load_pd(&x[i]);
+        __m256d xim1 = _mm256_loadu_pd(&x[i - 1]);
+        __m256d xip1 = _mm256_loadu_pd(&x[i + 1]);
+
+        __m256d yi = _mm256_load_pd(&y[i]);
+        __m256d i_vec = _mm256_set_pd(i + 3, i + 2, i + 1, i);
+
+        __m256d a = _mm256_blendv_pd(xip1, xim1, _mm256_castsi256_pd(_mm256_cvtepi64_pd(_mm256_rem_epi64(_mm256_set_epi64x(i + 3, i + 2, i + 1, i), _mm256_set1_epi64x(2)))));
+        __m256d rounded_a = _mm256_round_pd(a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(yi, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+
+        __m256d cond = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OQ);
+        __m256d result = _mm256_blendv_pd(_mm256_sub_pd(yi, _mm256_mul_pd(three, i_vec)), _mm256_add_pd(a, _mm256_mul_pd(a, yi)), cond);
+
+        _mm256_store_pd(&z[i], result);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z) {
+    __m256d one = _mm256_set1_pd(1.0);
+    __m256d three = _mm256_set1_pd(3.0);
+    for (int i = 0; i < N; i += 4) {
+        __m256d xi = _mm256_load_pd(&x[i]);
+        __m256d xim1 = _mm256_loadu_pd(&x[i - 1]);
+        __m256d xip1 = _mm256_loadu_pd(&x[i + 1]);
+        __m256d a = _mm256_blend_pd(xim1, xip1, 0x55);
+        __m256d b = _mm256_load_pd(&y[i]);
+        __m256d rounded_a = _mm256_round_pd(a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rounded_b = _mm256_round_pd(b, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d cond = _mm256_cmp_pd(rounded_a, rounded_b, _CMP_GT_OQ);
+        __m256d i_vec = _mm256_set_pd(i + 3, i + 2, i + 1, i);
+        __m256d result1 = _mm256_fmadd_pd(a, b, a);
+        __m256d result2 = _mm256_fmsub_pd(three, i_vec, b);
+        __m256d result = _mm256_blendv_pd(result2, result1, cond);
+        _mm256_store_pd(&z[i], result);
+    }
+}
+
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

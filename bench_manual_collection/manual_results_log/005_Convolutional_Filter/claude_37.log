@@ -1,0 +1,817 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+
+#define GET_X(i, j) x[(i) * N + (j)]
+#define GET_Y(i, j) y[(i) * ON + (j)]
+#define GET_H(i, j) h[(i) * K + (j)]
+
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    
+    // Precompute kernel values
+    alignas(32) double h00 = GET_H(0, 0);
+    alignas(32) double h01 = GET_H(0, 1);
+    alignas(32) double h02 = GET_H(0, 2);
+    alignas(32) double h03 = GET_H(0, 3);
+    alignas(32) double h10 = GET_H(1, 0);
+    alignas(32) double h11 = GET_H(1, 1);
+    alignas(32) double h12 = GET_H(1, 2);
+    alignas(32) double h13 = GET_H(1, 3);
+    alignas(32) double h20 = GET_H(2, 0);
+    alignas(32) double h21 = GET_H(2, 1);
+    alignas(32) double h22 = GET_H(2, 2);
+    alignas(32) double h23 = GET_H(2, 3);
+    alignas(32) double h30 = GET_H(3, 0);
+    alignas(32) double h31 = GET_H(3, 1);
+    alignas(32) double h32 = GET_H(3, 2);
+    alignas(32) double h33 = GET_H(3, 3);
+    
+    // Sign mask for absolute value
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+    
+    // Process output
+    for (int i = 0; i < ON; i++) {
+        // Process 4 columns at a time
+        int j = 0;
+        for (; j <= ON - 4; j += 4) {
+            // Initialize sum
+            __m256d sum = _mm256_setzero_pd();
+            
+            // Base coefficient: (i + j - 1)
+            __m256d base_ij = _mm256_set_pd(
+                i + j + 3 - 1.0,
+                i + j + 2 - 1.0,
+                i + j + 1 - 1.0,
+                i + j - 1.0
+            );
+            
+            // k0=0, k1=0
+            {
+                __m256d h_val = _mm256_set1_pd(h00);
+                __m256d ksum = _mm256_set1_pd(0.0); // k0+k1 = 0+0
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 0, j + 3 + 0),
+                    GET_X(i + 0, j + 2 + 0),
+                    GET_X(i + 0, j + 1 + 0),
+                    GET_X(i + 0, j + 0)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=0, k1=1
+            {
+                __m256d h_val = _mm256_set1_pd(h01);
+                __m256d ksum = _mm256_set1_pd(1.0); // k0+k1 = 0+1
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 0, j + 3 + 1),
+                    GET_X(i + 0, j + 2 + 1),
+                    GET_X(i + 0, j + 1 + 1),
+                    GET_X(i + 0, j + 1)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=0, k1=2
+            {
+                __m256d h_val = _mm256_set1_pd(h02);
+                __m256d ksum = _mm256_set1_pd(2.0); // k0+k1 = 0+2
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 0, j + 3 + 2),
+                    GET_X(i + 0, j + 2 + 2),
+                    GET_X(i + 0, j + 1 + 2),
+                    GET_X(i + 0, j + 2)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=0, k1=3
+            {
+                __m256d h_val = _mm256_set1_pd(h03);
+                __m256d ksum = _mm256_set1_pd(3.0); // k0+k1 = 0+3
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 0, j + 3 + 3),
+                    GET_X(i + 0, j + 2 + 3),
+                    GET_X(i + 0, j + 1 + 3),
+                    GET_X(i + 0, j + 3)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=1, k1=0
+            {
+                __m256d h_val = _mm256_set1_pd(h10);
+                __m256d ksum = _mm256_set1_pd(1.0); // k0+k1 = 1+0
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 1, j + 3 + 0),
+                    GET_X(i + 1, j + 2 + 0),
+                    GET_X(i + 1, j + 1 + 0),
+                    GET_X(i + 1, j + 0)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=1, k1=1
+            {
+                __m256d h_val = _mm256_set1_pd(h11);
+                __m256d ksum = _mm256_set1_pd(2.0); // k0+k1 = 1+1
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 1, j + 3 + 1),
+                    GET_X(i + 1, j + 2 + 1),
+                    GET_X(i + 1, j + 1 + 1),
+                    GET_X(i + 1, j + 1)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=1, k1=2
+            {
+                __m256d h_val = _mm256_set1_pd(h12);
+                __m256d ksum = _mm256_set1_pd(3.0); // k0+k1 = 1+2
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 1, j + 3 + 2),
+                    GET_X(i + 1, j + 2 + 2),
+                    GET_X(i + 1, j + 1 + 2),
+                    GET_X(i + 1, j + 2)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=1, k1=3
+            {
+                __m256d h_val = _mm256_set1_pd(h13);
+                __m256d ksum = _mm256_set1_pd(4.0); // k0+k1 = 1+3
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 1, j + 3 + 3),
+                    GET_X(i + 1, j + 2 + 3),
+                    GET_X(i + 1, j + 1 + 3),
+                    GET_X(i + 1, j + 3)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=2, k1=0
+            {
+                __m256d h_val = _mm256_set1_pd(h20);
+                __m256d ksum = _mm256_set1_pd(2.0); // k0+k1 = 2+0
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 2, j + 3 + 0),
+                    GET_X(i + 2, j + 2 + 0),
+                    GET_X(i + 2, j + 1 + 0),
+                    GET_X(i + 2, j + 0)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=2, k1=1
+            {
+                __m256d h_val = _mm256_set1_pd(h21);
+                __m256d ksum = _mm256_set1_pd(3.0); // k0+k1 = 2+1
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 2, j + 3 + 1),
+                    GET_X(i + 2, j + 2 + 1),
+                    GET_X(i + 2, j + 1 + 1),
+                    GET_X(i + 2, j + 1)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=2, k1=2
+            {
+                __m256d h_val = _mm256_set1_pd(h22);
+                __m256d ksum = _mm256_set1_pd(4.0); // k0+k1 = 2+2
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 2, j + 3 + 2),
+                    GET_X(i + 2, j + 2 + 2),
+                    GET_X(i + 2, j + 1 + 2),
+                    GET_X(i + 2, j + 2)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=2, k1=3
+            {
+                __m256d h_val = _mm256_set1_pd(h23);
+                __m256d ksum = _mm256_set1_pd(5.0); // k0+k1 = 2+3
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 2, j + 3 + 3),
+                    GET_X(i + 2, j + 2 + 3),
+                    GET_X(i + 2, j + 1 + 3),
+                    GET_X(i + 2, j + 3)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=3, k1=0
+            {
+                __m256d h_val = _mm256_set1_pd(h30);
+                __m256d ksum = _mm256_set1_pd(3.0); // k0+k1 = 3+0
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 3, j + 3 + 0),
+                    GET_X(i + 3, j + 2 + 0),
+                    GET_X(i + 3, j + 1 + 0),
+                    GET_X(i + 3, j + 0)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=3, k1=1
+            {
+                __m256d h_val = _mm256_set1_pd(h31);
+                __m256d ksum = _mm256_set1_pd(4.0); // k0+k1 = 3+1
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 3, j + 3 + 1),
+                    GET_X(i + 3, j + 2 + 1),
+                    GET_X(i + 3, j + 1 + 1),
+                    GET_X(i + 3, j + 1)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=3, k1=2
+            {
+                __m256d h_val = _mm256_set1_pd(h32);
+                __m256d ksum = _mm256_set1_pd(5.0); // k0+k1 = 3+2
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 3, j + 3 + 2),
+                    GET_X(i + 3, j + 2 + 2),
+                    GET_X(i + 3, j + 1 + 2),
+                    GET_X(i + 3, j + 2)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // k0=3, k1=3
+            {
+                __m256d h_val = _mm256_set1_pd(h33);
+                __m256d ksum = _mm256_set1_pd(6.0); // k0+k1 = 3+3
+                __m256d coef = _mm256_add_pd(base_ij, ksum);
+                
+                __m256d x_vals = _mm256_set_pd(
+                    GET_X(i + 3, j + 3 + 3),
+                    GET_X(i + 3, j + 2 + 3),
+                    GET_X(i + 3, j + 1 + 3),
+                    GET_X(i + 3, j + 3)
+                );
+                
+                __m256d abs_x = _mm256_andnot_pd(sign_mask, x_vals);
+                __m256d term = _mm256_mul_pd(coef, _mm256_mul_pd(h_val, abs_x));
+                sum = _mm256_add_pd(sum, term);
+            }
+            
+            // Store the 4 results
+            _mm256_storeu_pd(&GET_Y(i, j), sum);
+        }
+        
+        // Handle remaining columns
+        for (; j < ON; j++) {
+            double sum = 0.0;
+            
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    double coef = i + j + k0 + k1 - 1;
+                    sum += coef * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+            
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+71723.1 cycles
+
+Running: maxperformance
+99056.5 cycles
+<<<
+0.7240625299702695
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    
+    // Precompute h values into aligned arrays for better vectorization
+    alignas(32) double h_aligned[K][K];
+    for (int k0 = 0; k0 < K; k0++) {
+        for (int k1 = 0; k1 < K; k1++) {
+            h_aligned[k0][k1] = GET_H(k0, k1);
+        }
+    }
+    
+    // Process 4 elements at a time using AVX2
+    for (int i = 0; i < ON; i++) {
+        int j;
+        // Process blocks of 4 columns at a time
+        for (j = 0; j + 3 < ON; j += 4) {
+            // Initialize 4 accumulators for current output positions
+            __m256d sum0 = _mm256_setzero_pd();
+            __m256d sum1 = _mm256_setzero_pd();
+            __m256d sum2 = _mm256_setzero_pd();
+            __m256d sum3 = _mm256_setzero_pd();
+            
+            // Create coefficient vectors for (i+j+k0+k1-1)
+            const __m256d base_coef = _mm256_set_pd(
+                i + j + 3 - 1,
+                i + j + 2 - 1,
+                i + j + 1 - 1,
+                i + j - 1
+            );
+            
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    // Load h[k0][k1] into all lanes
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[k0][k1]);
+                    
+                    // Compute the coefficients for each column position
+                    const __m256d coef = _mm256_add_pd(base_coef, _mm256_set1_pd(k0 + k1));
+                    
+                    // Process the 4 adjacent positions for current k0,k1
+                    // Calculate absolute values of x
+                    __m256d x_val0 = _mm256_loadu_pd(&GET_X(i + k0, j + k1));
+                    x_val0 = _mm256_andnot_pd(_mm256_set1_pd(-0.0), x_val0); // abs operation
+                    
+                    // Multiply coefficient by h and x_abs
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_val0);
+                    
+                    // Add to accumulators
+                    sum0 = _mm256_add_pd(sum0, prod);
+                }
+            }
+            
+            // Store the results
+            _mm256_storeu_pd(&GET_Y(i, j), sum0);
+        }
+        
+        // Handle remaining columns
+        for (; j < ON; j++) {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; k0++) {
+                for (int k1 = 0; k1 < K; k1++) {
+                    sum += (i + j + k0 + k1 - 1) * h_aligned[k0][k1] * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+71131.7 cycles
+
+Running: maxperformance
+63720.2 cycles
+<<<
+1.1163131942460947
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    
+    // Precompute h values into aligned arrays for better vectorization
+    alignas(32) double h_aligned[K][K];
+    for (int k0 = 0; k0 < K; k0++) {
+        for (int k1 = 0; k1 < K; k1++) {
+            h_aligned[k0][k1] = GET_H(k0, k1);
+        }
+    }
+    
+    // Constants for absolute value calculation
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+    
+    // Process rows
+    for (int i = 0; i < ON; i++) {
+        int j = 0;
+        
+        // Process blocks of 4 columns at a time using AVX2
+        for (; j + 3 < ON; j += 4) {
+            // Initialize accumulator for 4 adjacent output elements
+            __m256d sum = _mm256_setzero_pd();
+            
+            // Base coefficient (i+j-1) for four adjacent columns
+            const __m256d base_coef = _mm256_set_pd(
+                i + j + 3 - 1,
+                i + j + 2 - 1,
+                i + j + 1 - 1,
+                i + j - 1
+            );
+            
+            // Fully unroll both loops for better instruction scheduling
+            // k0 = 0 block
+            {
+                const __m256d k0_coef = _mm256_add_pd(base_coef, _mm256_set1_pd(0));
+                
+                // k1 = 0
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(0));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[0][0]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 0, j + 0));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 1
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(1));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[0][1]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 0, j + 1));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 2
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(2));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[0][2]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 0, j + 2));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 3
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(3));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[0][3]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 0, j + 3));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+            }
+            
+            // k0 = 1 block
+            {
+                const __m256d k0_coef = _mm256_add_pd(base_coef, _mm256_set1_pd(1));
+                
+                // k1 = 0
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(0));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[1][0]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 1, j + 0));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 1
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(1));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[1][1]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 1, j + 1));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 2
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(2));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[1][2]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 1, j + 2));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 3
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(3));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[1][3]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 1, j + 3));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+            }
+            
+            // k0 = 2 block
+            {
+                const __m256d k0_coef = _mm256_add_pd(base_coef, _mm256_set1_pd(2));
+                
+                // k1 = 0
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(0));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[2][0]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 2, j + 0));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 1
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(1));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[2][1]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 2, j + 1));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 2
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(2));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[2][2]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 2, j + 2));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 3
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(3));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[2][3]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 2, j + 3));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+            }
+            
+            // k0 = 3 block
+            {
+                const __m256d k0_coef = _mm256_add_pd(base_coef, _mm256_set1_pd(3));
+                
+                // k1 = 0
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(0));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[3][0]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 3, j + 0));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 1
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(1));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[3][1]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 3, j + 1));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 2
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(2));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[3][2]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 3, j + 2));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+                
+                // k1 = 3
+                {
+                    const __m256d coef = _mm256_add_pd(k0_coef, _mm256_set1_pd(3));
+                    const __m256d h_val = _mm256_set1_pd(h_aligned[3][3]);
+                    __m256d x_vals = _mm256_loadu_pd(&GET_X(i + 3, j + 3));
+                    x_vals = _mm256_andnot_pd(sign_mask, x_vals);
+                    __m256d prod = _mm256_mul_pd(coef, h_val);
+                    prod = _mm256_mul_pd(prod, x_vals);
+                    sum = _mm256_add_pd(sum, prod);
+                }
+            }
+            
+            // Store the results
+            _mm256_storeu_pd(&GET_Y(i, j), sum);
+        }
+        
+        // Handle remaining columns (less than 4)
+        for (; j < ON; j++) {
+            double sum = 0.0;
+            
+            // Precompute base coefficient
+            const double base_ij = i + j - 1;
+            
+            // Fully unrolled loops for scalar path too
+            // k0 = 0
+            {
+                const double k0_coef = base_ij + 0;
+                
+                // k1 = 0
+                sum += (k0_coef + 0) * h_aligned[0][0] * fabs(GET_X(i + 0, j + 0));
+                
+                // k1 = 1
+                sum += (k0_coef + 1) * h_aligned[0][1] * fabs(GET_X(i + 0, j + 1));
+                
+                // k1 = 2
+                sum += (k0_coef + 2) * h_aligned[0][2] * fabs(GET_X(i + 0, j + 2));
+                
+                // k1 = 3
+                sum += (k0_coef + 3) * h_aligned[0][3] * fabs(GET_X(i + 0, j + 3));
+            }
+            
+            // k0 = 1
+            {
+                const double k0_coef = base_ij + 1;
+                
+                // k1 = 0
+                sum += (k0_coef + 0) * h_aligned[1][0] * fabs(GET_X(i + 1, j + 0));
+                
+                // k1 = 1
+                sum += (k0_coef + 1) * h_aligned[1][1] * fabs(GET_X(i + 1, j + 1));
+                
+                // k1 = 2
+                sum += (k0_coef + 2) * h_aligned[1][2] * fabs(GET_X(i + 1, j + 2));
+                
+                // k1 = 3
+                sum += (k0_coef + 3) * h_aligned[1][3] * fabs(GET_X(i + 1, j + 3));
+            }
+            
+            // k0 = 2
+            {
+                const double k0_coef = base_ij + 2;
+                
+                // k1 = 0
+                sum += (k0_coef + 0) * h_aligned[2][0] * fabs(GET_X(i + 2, j + 0));
+                
+                // k1 = 1
+                sum += (k0_coef + 1) * h_aligned[2][1] * fabs(GET_X(i + 2, j + 1));
+                
+                // k1 = 2
+                sum += (k0_coef + 2) * h_aligned[2][2] * fabs(GET_X(i + 2, j + 2));
+                
+                // k1 = 3
+                sum += (k0_coef + 3) * h_aligned[2][3] * fabs(GET_X(i + 2, j + 3));
+            }
+            
+            // k0 = 3
+            {
+                const double k0_coef = base_ij + 3;
+                
+                // k1 = 0
+                sum += (k0_coef + 0) * h_aligned[3][0] * fabs(GET_X(i + 3, j + 0));
+                
+                // k1 = 1
+                sum += (k0_coef + 1) * h_aligned[3][1] * fabs(GET_X(i + 3, j + 1));
+                
+                // k1 = 2
+                sum += (k0_coef + 2) * h_aligned[3][2] * fabs(GET_X(i + 3, j + 2));
+                
+                // k1 = 3
+                sum += (k0_coef + 3) * h_aligned[3][3] * fabs(GET_X(i + 3, j + 3));
+            }
+            
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+73493 cycles
+
+Running: maxperformance
+75463.2 cycles
+<<<
+0.9738919102290918
+================================

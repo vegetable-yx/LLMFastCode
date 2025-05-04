@@ -1,0 +1,261 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+
+#define GET_X(i, j) x[(i) * N + (j)]
+#define GET_Y(i, j) y[(i) * ON + (j)]
+#define GET_H(i, j) h[(i) * K + (j)]
+
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+#define ON (N - K + 1)
+
+#define GET_X(i, j) x[((i) * N) + (j)]
+#define GET_Y(i, j) y[((i) * ON) + (j)]
+#define GET_H(i, j) h[((i) * K) + (j)]
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    __m256d h_vec[K][K];
+    for (int k0 = 0; k0 < K; ++k0)
+        for (int k1 = 0; k1 < K; ++k1)
+            h_vec[k0][k1] = _mm256_set1_pd(GET_H(k0, k1));
+
+    for (int i = 0; i < ON; ++i)
+    {
+        for (int j = 0; j <= ON - 4; j += 4)
+        {
+            __m256d acc = _mm256_setzero_pd();
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    int bias0 = i + k0;
+                    int bias1 = j + k1;
+
+                    __m256d x_vec = _mm256_loadu_pd(&GET_X(bias0, bias1));
+                    __m256d abs_x = _mm256_max_pd(x_vec, _mm256_sub_pd(_mm256_setzero_pd(), x_vec));
+
+                    __m256d coeff = _mm256_set_pd(
+                        (bias0 + j + 3 + k1 - 1),
+                        (bias0 + j + 2 + k1 - 1),
+                        (bias0 + j + 1 + k1 - 1),
+                        (bias0 + j + 0 + k1 - 1)
+                    );
+
+                    __m256d prod = _mm256_mul_pd(h_vec[k0][k1], _mm256_mul_pd(coeff, abs_x));
+                    acc = _mm256_add_pd(acc, prod);
+                }
+            }
+            _mm256_storeu_pd(&GET_Y(i, j), acc);
+        }
+
+        // Handle tail elements
+        for (int j = (ON & ~3); j < ON; ++j)
+        {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    sum += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+71284 cycles
+
+Running: maxperformance
+91387.2 cycles
+<<<
+0.7800217098236952
+================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+#define ON (N - K + 1)
+
+#define GET_X(i, j) x[(i) * N + (j)]
+#define GET_Y(i, j) y[(i) * ON + (j)]
+#define GET_H(i, j) h[(i) * K + (j)]
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    __m256d h_vals[K][K];
+    for (int k0 = 0; k0 < K; ++k0)
+        for (int k1 = 0; k1 < K; ++k1)
+            h_vals[k0][k1] = _mm256_set1_pd(GET_H(k0, k1));
+
+    for (int i = 0; i < ON; ++i)
+    {
+        for (int j = 0; j <= ON - 4; j += 4)
+        {
+            __m256d acc = _mm256_setzero_pd();
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    int base_idx = (i + k0) * N + (j + k1);
+                    __m256d xval = _mm256_loadu_pd(&x[base_idx]);
+                    __m256d abs_xval = _mm256_andnot_pd(_mm256_set1_pd(-0.0), xval); // fabs
+
+                    double weight_base = i + j + k0 + k1 - 1;
+                    __m256d weight = _mm256_set_pd(
+                        weight_base + 3,
+                        weight_base + 2,
+                        weight_base + 1,
+                        weight_base
+                    );
+
+                    __m256d product = _mm256_mul_pd(weight, h_vals[k0][k1]);
+                    acc = _mm256_fmadd_pd(product, abs_xval, acc);
+                }
+            }
+            _mm256_storeu_pd(&y[i * ON + j], acc);
+        }
+
+        for (int j = (ON / 4) * 4; j < ON; ++j)
+        {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    double val = GET_X(i + k0, j + k1);
+                    sum += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * (val < 0 ? -val : val);
+                }
+            }
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+71135 cycles
+
+Running: maxperformance
+93652 cycles
+<<<
+0.7595673343868791
+================================
+#include <immintrin.h>
+#include <math.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+#define ON (N - K + 1)
+
+#define GET_X(i, j) x[(i) * N + (j)]
+#define GET_H(i, j) h[(i) * K + (j)]
+#define GET_Y(i, j) y[(i) * ON + (j)]
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    __m256d vh[K][K];
+    for (int k0 = 0; k0 < K; ++k0)
+    {
+        for (int k1 = 0; k1 < K; ++k1)
+        {
+            vh[k0][k1] = _mm256_set1_pd(GET_H(k0, k1));
+        }
+    }
+
+    for (int i = 0; i < ON; ++i)
+    {
+        for (int j = 0; j < ON; j += 4)
+        {
+            __m256d vy = _mm256_setzero_pd();
+
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    double weight = i + k0 + k1 - 1;
+                    __m256d vw = _mm256_set1_pd(weight);
+                    __m256d vx = _mm256_loadu_pd(&GET_X(i + k0, j + k1));
+                    vx = _mm256_andnot_pd(_mm256_set1_pd(-0.0), vx); // abs
+                    vy = _mm256_fmadd_pd(vw, _mm256_mul_pd(vh[k0][k1], vx), vy);
+                }
+            }
+
+            _mm256_storeu_pd(&GET_Y(i, j), vy);
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+101415 cycles
+
+Running: maxperformance
+49260.8 cycles
+<<<
+WA
+================================

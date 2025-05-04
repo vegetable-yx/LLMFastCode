@@ -1,0 +1,392 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
+
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
+
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
+        }
+    }
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+inline double _mm256_reduce_add(__m256d v) {
+    __m256d sum1 = _mm256_hadd_pd(v, v);
+    __m256d sum2 = _mm256_hadd_pd(sum1, sum1);
+    return _mm256_extract_pd(sum2, 0);
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    __m256d mask_r0 = _mm256_set_pd(-1.0, -1.0, -1.0, 1.0);
+    __m256d mask_r1 = _mm256_set_pd(-1.0, 1.0, 1.0, 1.0);
+    __m256d mask_r2 = _mm256_set_pd(1.0, -1.0, 1.0, 1.0);
+    __m256d mask_r3 = _mm256_set_pd(1.0, 1.0, -1.0, 1.0);
+
+    // i=0, j=0
+    __m256d vx0 = _mm256_loadu_pd(&x[0]);
+    __m256d vy0 = _mm256_loadu_pd(&y[0]);
+    __m256d product_r0 = _mm256_mul_pd(vx0, vy0);
+    __m256d temp_r0 = _mm256_mul_pd(product_r0, mask_r0);
+    double r0 = _mm256_reduce_add(temp_r0);
+
+    __m256d permuted_vy_r1 = _mm256_permute_pd(vy0, 0xB1);
+    __m256d product_r1 = _mm256_mul_pd(vx0, permuted_vy_r1);
+    __m256d temp_r1 = _mm256_mul_pd(product_r1, mask_r1);
+    double r1 = _mm256_reduce_add(temp_r1);
+
+    __m256d permuted_vy_r2 = _mm256_permute_pd(vy0, 0x4E);
+    __m256d product_r2 = _mm256_mul_pd(vx0, permuted_vy_r2);
+    __m256d temp_r2 = _mm256_mul_pd(product_r2, mask_r2);
+    double r2 = _mm256_reduce_add(temp_r2);
+
+    __m256d permuted_vy_r3 = _mm256_permute_pd(vy0, 0x1B);
+    __m256d product_r3 = _mm256_mul_pd(vx0, permuted_vy_r3);
+    __m256d temp_r3 = _mm256_mul_pd(product_r3, mask_r3);
+    double r3 = _mm256_reduce_add(temp_r3);
+
+    __m256d result0 = _mm256_set_pd(r3, r2, r1, r0);
+    _mm256_storeu_pd(&A[0], result0);
+
+    // i=0, j=1
+    __m256d vy1 = _mm256_loadu_pd(&y[4]);
+    __m256d product_r0_j1 = _mm256_mul_pd(vx0, vy1);
+    __m256d temp_r0_j1 = _mm256_mul_pd(product_r0_j1, mask_r0);
+    double r0_j1 = _mm256_reduce_add(temp_r0_j1);
+
+    __m256d permuted_vy_r1_j1 = _mm256_permute_pd(vy1, 0xB1);
+    __m256d product_r1_j1 = _mm256_mul_pd(vx0, permuted_vy_r1_j1);
+    __m256d temp_r1_j1 = _mm256_mul_pd(product_r1_j1, mask_r1);
+    double r1_j1 = _mm256_reduce_add(temp_r1_j1);
+
+    __m256d permuted_vy_r2_j1 = _mm256_permute_pd(vy1, 0x4E);
+    __m256d product_r2_j1 = _mm256_mul_pd(vx0, permuted_vy_r2_j1);
+    __m256d temp_r2_j1 = _mm256_mul_pd(product_r2_j1, mask_r2);
+    double r2_j1 = _mm256_reduce_add(temp_r2_j1);
+
+    __m256d permuted_vy_r3_j1 = _mm256_permute_pd(vy1, 0x1B);
+    __m256d product_r3_j1 = _mm256_mul_pd(vx0, permuted_vy_r3_j1);
+    __m256d temp_r3_j1 = _mm256_mul_pd(product_r3_j1, mask_r3);
+    double r3_j1 = _mm256_reduce_add(temp_r3_j1);
+
+    __m256d result1 = _mm256_set_pd(r3_j1, r2_j1, r1_j1, r0_j1);
+    _mm256_storeu_pd(&A[4], result1);
+
+    // i=1, j=0
+    __m256d vx1 = _mm256_loadu_pd(&x[4]);
+    __m256d product_r0_i1 = _mm256_mul_pd(vx1, vy0);
+    __m256d temp_r0_i1 = _mm256_mul_pd(product_r0_i1, mask_r0);
+    double r0_i1 = _mm256_reduce_add(temp_r0_i1);
+
+    __m256d permuted_vy_r1_i1 = _mm256_permute_pd(vy0, 0xB1);
+    __m256d product_r1_i1 = _mm256_mul_pd(vx1, permuted_vy_r1_i1);
+    __m256d temp_r1_i1 = _mm256_mul_pd(product_r1_i1, mask_r1);
+    double r1_i1 = _mm256_reduce_add(temp_r1_i1);
+
+    __m256d permuted_vy_r2_i1 = _mm256_permute_pd(vy0, 0x4E);
+    __m256d product_r2_i1 = _mm256_mul_pd(vx1, permuted_vy_r2_i1);
+    __m256d temp_r2_i1 = _mm256_mul_pd(product_r2_i1, mask_r2);
+    double r2_i1 = _mm256_reduce_add(temp_r2_i1);
+
+    __m256d permuted_vy_r3_i1 = _mm256_permute_pd(vy0, 0x1B);
+    __m256d product_r3_i1 = _mm256_mul_pd(vx1, permuted_vy_r3_i1);
+    __m256d temp_r3_i1 = _mm256_mul_pd(product_r3_i1, mask_r3);
+    double r3_i1 = _mm256_reduce_add(temp_r3_i1);
+
+    __m256d result2 = _mm256_set_pd(r3_i1, r2_i1, r1_i1, r0_i1);
+    _mm256_storeu_pd(&A[8], result2);
+
+    // i=1, j=1
+    __m256d product_r0_i1j1 = _mm256_mul_pd(vx1, vy1);
+    __m256d temp_r0_i1j1 = _mm256_mul_pd(product_r0_i1j1, mask_r0);
+    double r0_i1j1 = _mm256_reduce_add(temp_r0_i1j1);
+
+    __m256d permuted_vy_r1_i1j1 = _mm256_permute_pd(vy1, 0xB1);
+    __m256d product_r1_i1j1 = _mm256_mul_pd(vx1, permuted_vy_r1_i1j1);
+    __m256d temp_r1_i1j1 = _mm256_mul_pd(product_r1_i1j1, mask_r1);
+    double r1_i1j1 = _mm256_reduce_add(temp_r1_i1j1);
+
+    __m256d permuted_vy_r2_i1j1 = _mm256_permute_pd(vy1, 0x4E);
+    __m256d product_r2_i1j1 = _mm256_mul_pd(vx1, permuted_vy_r2_i1j1);
+    __m256d temp_r2_i1j1 = _mm256_mul_pd(product_r2_i1j1, mask_r2);
+    double r2_i1j1 = _mm256_reduce_add(temp_r2_i1j1);
+
+    __m256d permuted_vy_r3_i1j1 = _mm256_permute_pd(vy1, 0x1B);
+    __m256d product_r3_i1j1 = _mm256_mul_pd(vx1, permuted_vy_r3_i1j1);
+    __m256d temp_r3_i1j1 = _mm256_mul_pd(product_r3_i1j1, mask_r3);
+    double r3_i1j1 = _mm256_reduce_add(temp_r3_i1j1);
+
+    __m256d result3 = _mm256_set_pd(r3_i1j1, r2_i1j1, r1_i1j1, r0_i1j1);
+    _mm256_storeu_pd(&A[12], result3);
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    // i=0, j=0
+    __m256d x0 = _mm256_load_pd(x + 0);
+    __m256d y0 = _mm256_load_pd(y + 0);
+    __m256d v = _mm256_mul_pd(x0, y0);
+    __m256d sum_pair = _mm256_hadd_pd(v, v);
+    __m256d sum_all = _mm256_hadd_pd(sum_pair, sum_pair);
+    sum_all = _mm256_permute_pd(sum_all, 0x00);
+    __m256d x0y0 = _mm256_shuffle_pd(v, v, 0x00);
+    __m256d r0 = _mm256_sub_pd(_mm256_add_pd(x0y0, x0y0), sum_all);
+    double r0_val = _mm256_extract_pd(r0, 0);
+    __m256d permuted_y_r1 = _mm256_permute_pd(y0, 0x54);
+    __m256d product_r1 = _mm256_mul_pd(x0, permuted_y_r1);
+    __m256d sum_pair_r1 = _mm256_hadd_pd(product_r1, product_r1);
+    __m256d sum_all_r1 = _mm256_hadd_pd(sum_pair_r1, sum_pair_r1);
+    sum_all_r1 = _mm256_permute_pd(sum_all_r1, 0x00);
+    __m256d product3_r1 = _mm256_shuffle_pd(product_r1, product_r1, 0x03);
+    __m256d two_product3_r1 = _mm256_add_pd(product3_r1, product3_r1);
+    __m256d r1 = _mm256_sub_pd(sum_all_r1, two_product3_r1);
+    double r1_val = _mm256_extract_pd(r1, 0);
+    __m256d permuted_y_r2 = _mm256_permute_pd(y0, 0xAA);
+    __m256d product_r2 = _mm256_mul_pd(x0, permuted_y_r2);
+    __m256d sum_pair_r2 = _mm256_hadd_pd(product_r2, product_r2);
+    __m256d sum_all_r2 = _mm256_hadd_pd(sum_pair_r2, sum_pair_r2);
+    sum_all_r2 = _mm256_permute_pd(sum_all_r2, 0x00);
+    __m256d product1_r2 = _mm256_shuffle_pd(product_r2, product_r2, 0x01);
+    __m256d two_product1_r2 = _mm256_add_pd(product1_r2, product1_r2);
+    __m256d r2 = _mm256_sub_pd(sum_all_r2, two_product1_r2);
+    double r2_val = _mm256_extract_pd(r2, 0);
+    __m256d permuted_y_r3 = _mm256_permute_pd(y0, 0xFF);
+    __m256d product_r3 = _mm256_mul_pd(x0, permuted_y_r3);
+    __m256d sum_pair_r3 = _mm256_hadd_pd(product_r3, product_r3);
+    __m256d sum_all_r3 = _mm256_hadd_pd(sum_pair_r3, sum_pair_r3);
+    sum_all_r3 = _mm256_permute_pd(sum_all_r3, 0x00);
+    __m256d product2_r3 = _mm256_shuffle_pd(product_r3, product_r3, 0x02);
+    __m256d two_product2_r3 = _mm256_add_pd(product2_r3, product2_r3);
+    __m256d r3 = _mm256_sub_pd(sum_all_r3, two_product2_r3);
+    double r3_val = _mm256_extract_pd(r3, 0);
+    A[0] = r0_val;
+    A[1] = r1_val;
+    A[2] = r2_val;
+    A[3] = r3_val;
+
+    // i=0, j=1
+    __m256d y1 = _mm256_load_pd(y + 4);
+    v = _mm256_mul_pd(x0, y1);
+    sum_pair = _mm256_hadd_pd(v, v);
+    sum_all = _mm256_hadd_pd(sum_pair, sum_pair);
+    sum_all = _mm256_permute_pd(sum_all, 0x00);
+    x0y0 = _mm256_shuffle_pd(v, v, 0x00);
+    r0 = _mm256_sub_pd(_mm256_add_pd(x0y0, x0y0), sum_all);
+    r0_val = _mm256_extract_pd(r0, 0);
+    permuted_y_r1 = _mm256_permute_pd(y1, 0x54);
+    product_r1 = _mm256_mul_pd(x0, permuted_y_r1);
+    sum_pair_r1 = _mm256_hadd_pd(product_r1, product_r1);
+    sum_all_r1 = _mm256_hadd_pd(sum_pair_r1, sum_pair_r1);
+    sum_all_r1 = _mm256_permute_pd(sum_all_r1, 0x00);
+    product3_r1 = _mm256_shuffle_pd(product_r1, product_r1, 0x03);
+    two_product3_r1 = _mm256_add_pd(product3_r1, product3_r1);
+    r1 = _mm256_sub_pd(sum_all_r1, two_product3_r1);
+    r1_val = _mm256_extract_pd(r1, 0);
+    permuted_y_r2 = _mm256_permute_pd(y1, 0xAA);
+    product_r2 = _mm256_mul_pd(x0, permuted_y_r2);
+    sum_pair_r2 = _mm256_hadd_pd(product_r2, product_r2);
+    sum_all_r2 = _mm256_hadd_pd(sum_pair_r2, sum_pair_r2);
+    sum_all_r2 = _mm256_permute_pd(sum_all_r2, 0x00);
+    product1_r2 = _mm256_shuffle_pd(product_r2, product_r2, 0x01);
+    two_product1_r2 = _mm256_add_pd(product1_r2, product1_r2);
+    r2 = _mm256_sub_pd(sum_all_r2, two_product1_r2);
+    r2_val = _mm256_extract_pd(r2, 0);
+    permuted_y_r3 = _mm256_permute_pd(y1, 0xFF);
+    product_r3 = _mm256_mul_pd(x0, permuted_y_r3);
+    sum_pair_r3 = _mm256_hadd_pd(product_r3, product_r3);
+    sum_all_r3 = _mm256_hadd_pd(sum_pair_r3, sum_pair_r3);
+    sum_all_r3 = _mm256_permute_pd(sum_all_r3, 0x00);
+    product2_r3 = _mm256_shuffle_pd(product_r3, product_r3, 0x02);
+    two_product2_r3 = _mm256_add_pd(product2_r3, product2_r3);
+    r3 = _mm256_sub_pd(sum_all_r3, two_product2_r3);
+    r3_val = _mm256_extract_pd(r3, 0);
+    A[4] = r0_val;
+    A[5] = r1_val;
+    A[6] = r2_val;
+    A[7] = r3_val;
+
+    // i=1, j=0
+    __m256d x1 = _mm256_load_pd(x + 4);
+    y0 = _mm256_load_pd(y + 0);
+    v = _mm256_mul_pd(x1, y0);
+    sum_pair = _mm256_hadd_pd(v, v);
+    sum_all = _mm256_hadd_pd(sum_pair, sum_pair);
+    sum_all = _mm256_permute_pd(sum_all, 0x00);
+    x0y0 = _mm256_shuffle_pd(v, v, 0x00);
+    r0 = _mm256_sub_pd(_mm256_add_pd(x0y0, x0y0), sum_all);
+    r0_val = _mm256_extract_pd(r0, 0);
+    permuted_y_r1 = _mm256_permute_pd(y0, 0x54);
+    product_r1 = _mm256_mul_pd(x1, permuted_y_r1);
+    sum_pair_r1 = _mm256_hadd_pd(product_r1, product_r1);
+    sum_all_r1 = _mm256_hadd_pd(sum_pair_r1, sum_pair_r1);
+    sum_all_r1 = _mm256_permute_pd(sum_all_r1, 0x00);
+    product3_r1 = _mm256_shuffle_pd(product_r1, product_r1, 0x03);
+    two_product3_r1 = _mm256_add_pd(product3_r1, product3_r1);
+    r1 = _mm256_sub_pd(sum_all_r1, two_product3_r1);
+    r1_val = _mm256_extract_pd(r1, 0);
+    permuted_y_r2 = _mm256_permute_pd(y0, 0xAA);
+    product_r2 = _mm256_mul_pd(x1, permuted_y_r2);
+    sum_pair_r2 = _mm256_hadd_pd(product_r2, product_r2);
+    sum_all_r2 = _mm256_hadd_pd(sum_pair_r2, sum_pair_r2);
+    sum_all_r2 = _mm256_permute_pd(sum_all_r2, 0x00);
+    product1_r2 = _mm256_shuffle_pd(product_r2, product_r2, 0x01);
+    two_product1_r2 = _mm256_add_pd(product1_r2, product1_r2);
+    r2 = _mm256_sub_pd(sum_all_r2, two_product1_r2);
+    r2_val = _mm256_extract_pd(r2, 0);
+    permuted_y_r3 = _mm256_permute_pd(y0, 0xFF);
+    product_r3 = _mm256_mul_pd(x1, permuted_y_r3);
+    sum_pair_r3 = _mm256_hadd_pd(product_r3, product_r3);
+    sum_all_r3 = _mm256_hadd_pd(sum_pair_r3, sum_pair_r3);
+    sum_all_r3 = _mm256_permute_pd(sum_all_r3, 0x00);
+    product2_r3 = _mm256_shuffle_pd(product_r3, product_r3, 0x02);
+    two_product2_r3 = _mm256_add_pd(product2_r3, product2_r3);
+    r3 = _mm256_sub_pd(sum_all_r3, two_product2_r3);
+    r3_val = _mm256_extract_pd(r3, 0);
+    A[8] = r0_val;
+    A[9] = r1_val;
+    A[10] = r2_val;
+    A[11] = r3_val;
+
+    // i=1, j=1
+    x1 = _mm256_load_pd(x + 4);
+    y1 = _mm256_load_pd(y + 4);
+    v = _mm256_mul_pd(x1, y1);
+    sum_pair = _mm256_hadd_pd(v, v);
+    sum_all = _mm256_hadd_pd(sum_pair, sum_pair);
+    sum_all = _mm256_permute_pd(sum_all, 0x00);
+    x0y0 = _mm256_shuffle_pd(v, v, 0x00);
+    r0 = _mm256_sub_pd(_mm256_add_pd(x0y0, x0y0), sum_all);
+    r0_val = _mm256_extract_pd(r0, 0);
+    permuted_y_r1 = _mm256_permute_pd(y1, 0x54);
+    product_r1 = _mm256_mul_pd(x1, permuted_y_r1);
+    sum_pair_r1 = _mm256_hadd_pd(product_r1, product_r1);
+    sum_all_r1 = _mm256_hadd_pd(sum_pair_r1, sum_pair_r1);
+    sum_all_r1 = _mm256_permute_pd(sum_all_r1, 0x00);
+    product3_r1 = _mm256_shuffle_pd(product_r1, product_r1, 0x03);
+    two_product3_r1 = _mm256_add_pd(product3_r1, product3_r1);
+    r1 = _mm256_sub_pd(sum_all_r1, two_product3_r1);
+    r1_val = _mm256_extract_pd(r1, 0);
+    permuted_y_r2 = _mm256_permute_pd(y1, 0xAA);
+    product_r2 = _mm256_mul_pd(x1, permuted_y_r2);
+    sum_pair_r2 = _mm256_hadd_pd(product_r2, product_r2);
+    sum_all_r2 = _mm256_hadd_pd(sum_pair_r2, sum_pair_r2);
+    sum_all_r2 = _mm256_permute_pd(sum_all_r2, 0x00);
+    product1_r2 = _mm256_shuffle_pd(product_r2, product_r2, 0x01);
+    two_product1_r2 = _mm256_add_pd(product1_r2, product1_r2);
+    r2 = _mm256_sub_pd(sum_all_r2, two_product1_r2);
+    r2_val = _mm256_extract_pd(r2, 0);
+    permuted_y_r3 = _mm256_permute_pd(y1, 0xFF);
+    product_r3 = _mm256_mul_pd(x1, permuted_y_r3);
+    sum_pair_r3 = _mm256_hadd_pd(product_r3, product_r3);
+    sum_all_r3 = _mm256_hadd_pd(sum_pair_r3, sum_pair_r3);
+    sum_all_r3 = _mm256_permute_pd(sum_all_r3, 0x00);
+    product2_r3 = _mm256_shuffle_pd(product_r3, product_r3, 0x02);
+    two_product2_r3 = _mm256_add_pd(product2_r3, product2_r3);
+    r3 = _mm256_sub_pd(sum_all_r3, two_product2_r3);
+    r3_val = _mm256_extract_pd(r3, 0);
+    A[12] = r0_val;
+    A[13] = r1_val;
+    A[14] = r2_val;
+    A[15] = r3_val;
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    __m256d x0 = _mm256_loadu_pd(&x[0]);
+    __m256d x1 = _mm256_loadu_pd(&x[4]);
+    __m256d y0 = _mm256_loadu_pd(&y[0]);
+    __m256d y1 = _mm256_loadu_pd(&y[4]);
+
+#define COMPUTE(i, j, x_vec, y_vec, idx) \
+    __m256d product0 = _mm256_mul_pd(x_vec, y_vec); \
+    __m256d product1 = _mm256_mul_pd(x_vec, _mm256_shuffle_pd(y_vec, y_vec, _MM_SHUFFLE(2,3,0,1))); \
+    __m256d product2 = _mm256_mul_pd(x_vec, _mm256_shuffle_pd(y_vec, y_vec, _MM_SHUFFLE(3,2,1,0))); \
+    __m256d product3 = _mm256_mul_pd(x_vec, _mm256_shuffle_pd(y_vec, y_vec, _MM_SHUFFLE(1,0,3,2))); \
+    __m256d sum0 = _mm256_hadd_pd(product0, product0); sum0 = _mm256_hadd_pd(sum0, sum0); \
+    __m256d sum1 = _mm256_hadd_pd(product1, product1); sum1 = _mm256_hadd_pd(sum1, sum1); \
+    __m256d sum2 = _mm256_hadd_pd(product2, product2); sum2 = _mm256_hadd_pd(sum2, sum2); \
+    __m256d sum3 = _mm256_hadd_pd(product3, product3); sum3 = _mm256_hadd_pd(sum3, sum3); \
+    double r0 = 2 * _mm256_extract_pd(product0, 0) - _mm256_extract_pd(sum0, 0); \
+    double r1 = _mm256_extract_pd(sum1, 0) - 2 * _mm256_extract_pd(product1, 3); \
+    double r2 = _mm256_extract_pd(sum2, 0) - 2 * _mm256_extract_pd(product2, 1); \
+    double r3 = _mm256_extract_pd(sum3, 0) - 2 * _mm256_extract_pd(product3, 2); \
+    A[idx + 0] = r0; A[idx + 1] = r1; A[idx + 2] = r2; A[idx + 3] = r3;
+
+    COMPUTE(0,0, x0, y0, 0)
+    COMPUTE(0,1, x0, y1, 4)
+    COMPUTE(1,0, x1, y0, 8)
+    COMPUTE(1,1, x1, y1,12)
+
+#undef COMPUTE
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

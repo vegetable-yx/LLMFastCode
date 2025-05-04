@@ -1,0 +1,245 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m256d three      = _mm256_set1_pd(3.0);
+    const __m256d offset0123 = _mm256_set_pd(3.0, 2.0, 1.0, 0.0);
+    const __m256d half       = _mm256_set1_pd(0.5);
+    const __m256d zero       = _mm256_setzero_pd();
+
+    int i = 0;
+    const int vec_end = N & ~3;
+
+    for (; i < vec_end; i += 4)
+    {
+        __m256d x_vec = _mm256_load_pd(x + i);
+        __m256d y_vec = _mm256_load_pd(y + i);
+
+        __m256d a_vec = _mm256_permute4x64_pd(x_vec, 0xB1);              // a = x[i ^ 1]
+
+        __m256d pos = _mm256_cmp_pd(a_vec, zero, _CMP_GE_OQ);            // round(a) away‑from‑zero
+        __m256d t1  = _mm256_round_pd(_mm256_add_pd(a_vec, half),
+                                      _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+        __m256d t2  = _mm256_round_pd(_mm256_sub_pd(a_vec, half),
+                                      _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
+        __m256d ra  = _mm256_blendv_pd(t2, t1, pos);
+
+        pos = _mm256_cmp_pd(y_vec, zero, _CMP_GE_OQ);                    // round(b) away‑from‑zero
+        t1  = _mm256_round_pd(_mm256_add_pd(y_vec, half),
+                              _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+        t2  = _mm256_round_pd(_mm256_sub_pd(y_vec, half),
+                              _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
+        __m256d rb = _mm256_blendv_pd(t2, t1, pos);
+
+        __m256d mask  = _mm256_cmp_pd(ra, rb, _CMP_GT_OQ);               // condition mask
+        __m256d alt1  = _mm256_fmadd_pd(a_vec, y_vec, a_vec);            // a + a*b
+        __m256d idx   = _mm256_add_pd(offset0123, _mm256_set1_pd((double)i));
+        __m256d alt2  = _mm256_fnmadd_pd(three, idx, y_vec);             // b - 3*i
+        __m256d res   = _mm256_blendv_pd(alt2, alt1, mask);              // select
+
+        _mm256_store_pd(z + i, res);
+    }
+
+    for (; i < N; ++i)                                                    // scalar tail
+    {
+        double a = (i & 1) ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        z[i] = (round(a) > round(b)) ? a + a * b : b - 3.0 * i;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+15853.2 cycles
+
+Running: maxperformance
+1525.59 cycles
+<<<
+15853.2 / 1525.59 = 10.391520657581658
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m256d half      = _mm256_set1_pd(0.5);
+    const __m256d signMask  = _mm256_set1_pd(-0.0);
+    const __m256d three     = _mm256_set1_pd(3.0);
+
+    int i = 0;
+    int limit = N & ~3;
+    for (; i < limit; i += 4)
+    {
+        __m256d xVec = _mm256_loadu_pd(x + i);
+        __m256d yVec = _mm256_loadu_pd(y + i);
+
+        __m256d aVec = _mm256_permute_pd(xVec, 0xF);                          // a = x[i^1]
+
+        __m256d signA = _mm256_and_pd(aVec, signMask);
+        __m256d signB = _mm256_and_pd(yVec, signMask);
+
+        __m256d rndA = _mm256_round_pd(_mm256_add_pd(aVec, _mm256_or_pd(half, signA)),
+                                       _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+        __m256d rndB = _mm256_round_pd(_mm256_add_pd(yVec, _mm256_or_pd(half, signB)),
+                                       _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+
+        __m256d mask = _mm256_cmp_pd(rndA, rndB, _CMP_GT_OQ);
+
+        __m256d trueVec  = _mm256_add_pd(aVec, _mm256_mul_pd(aVec, yVec));    // a + a*b
+        __m256d idxVec   = _mm256_setr_pd((double)i, (double)(i + 1), (double)(i + 2), (double)(i + 3));
+        __m256d falseVec = _mm256_sub_pd(yVec, _mm256_mul_pd(three, idxVec)); // b - 3*i
+
+        __m256d res = _mm256_blendv_pd(falseVec, trueVec, mask);
+        _mm256_storeu_pd(z + i, res);
+    }
+
+    for (; i < N; ++i)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+            z[i] = a + a * b;
+        else
+            z[i] = b - 3 * i;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance1
+16102.7 cycles
+
+Running: maxperformance
+1499.57 cycles
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m256d half      = _mm256_set1_pd(0.5);
+    const __m256d one       = _mm256_set1_pd(1.0);
+    const __m256d three     = _mm256_set1_pd(3.0);
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+
+    const __m256d mask_even = _mm256_castsi256_pd(_mm256_set_epi64x(-1LL,  0LL, -1LL,  0LL));
+    const __m256d mask_odd  = _mm256_castsi256_pd(_mm256_set_epi64x( 0LL, -1LL,  0LL, -1LL));
+
+    auto scalar_round = [](double v) -> double
+    {
+        return static_cast<double>(static_cast<long long>(v + (v >= 0.0 ? 0.5 : -0.5)));
+    };
+
+    /* index 0 (uses x[1]) */
+    {
+        double a = x[1];
+        double b = y[0];
+        z[0] = (scalar_round(a) > scalar_round(b)) ? a + a * b : b;
+    }
+
+    int i = 1;
+    for (; i + 4 < N; i += 4)
+    {
+        /* gather a */
+        __m256d left  = _mm256_loadu_pd(&x[i - 1]);   // x[i-1 .. i+2]
+        __m256d right = _mm256_loadu_pd(&x[i + 1]);   // x[i+1 .. i+4]
+        __m256d a     = _mm256_blendv_pd(right, left, (i & 1) ? mask_odd : mask_even);
+
+        /* load b */
+        __m256d b = _mm256_loadu_pd(&y[i]);
+
+        /* round‑away‑from‑zero(a) */
+        __m256d ra = _mm256_round_pd(
+            _mm256_add_pd(a, _mm256_or_pd(half, _mm256_and_pd(a, sign_mask))),
+            _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+
+        /* round‑away‑from‑zero(b) */
+        __m256d rb = _mm256_round_pd(
+            _mm256_add_pd(b, _mm256_or_pd(half, _mm256_and_pd(b, sign_mask))),
+            _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
+
+        /* compare */
+        __m256d cmp = _mm256_cmp_pd(ra, rb, _CMP_GT_OQ);
+
+        /* a + a*b  */
+        __m256d expr1 = _mm256_mul_pd(a, _mm256_add_pd(one, b));
+
+        /* b - 3*i  */
+        __m256d idx   = _mm256_set_pd((double)(i + 3),
+                                      (double)(i + 2),
+                                      (double)(i + 1),
+                                      (double) i);
+        __m256d expr2 = _mm256_sub_pd(b, _mm256_mul_pd(three, idx));
+
+        /* select */
+        __m256d res = _mm256_blendv_pd(expr2, expr1, cmp);
+        _mm256_storeu_pd(&z[i], res);
+    }
+
+    /* scalar tail (and any unvectorised elements) */
+    for (; i < N; ++i)
+    {
+        double a = (i & 1) ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (scalar_round(a) > scalar_round(b))
+            z[i] = a + a * b;
+        else
+            z[i] = b - 3.0 * i;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+16030.5 cycles
+
+Running: maxperformance
+1735.67 cycles
+<<<
+16030.5 / 1735.67 = 
+================================

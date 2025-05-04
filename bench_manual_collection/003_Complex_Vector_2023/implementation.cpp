@@ -3,7 +3,7 @@
 #include "common.h"
 
 // Precondition : 0 <= y[i] < 1.0, n = 1024
-void slow_performance(double *x, double *y, int n) {
+void slow_performance(double *__restrict x, double *__restrict y, int n) {
     for (int i = 0; i < n; i++) {
         unsigned int k = floor(4.0 * y[i]);
 
@@ -30,7 +30,7 @@ void slow_performance(double *x, double *y, int n) {
 #include <immintrin.h>
 #include <math.h>
 
-void maxperformance(double *x, double *y, int n)
+void maxperformance(double *__restrict x, double *__restrict y, int n)
 {
     // Process 4 elements at a time using AVX2
     int i = 0;

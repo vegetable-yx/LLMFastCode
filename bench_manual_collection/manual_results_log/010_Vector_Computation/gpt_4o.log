@@ -1,0 +1,235 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include <cmath>
+#include "common.h"
+
+inline __m256d round256(__m256d v) {
+    return _mm256_round_pd(v, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    constexpr int stride = 4;
+    int i = 1;
+    for (; i <= N - stride - 1; i += stride)
+    {
+        __m256i idx = _mm256_set_epi64x(i + 2, i + 1, i, i - 1);
+        __m256d xi1 = _mm256_i64gather_pd(x, idx, 8);
+        __m256d yv = _mm256_load_pd(y + i);
+        __m256d rvx = round256(xi1);
+        __m256d rvy = round256(yv);
+        __m256d mask = _mm256_cmp_pd(rvx, rvy, _CMP_GT_OQ);
+
+        __m256d mul = _mm256_mul_pd(xi1, yv);
+        __m256d add = _mm256_add_pd(xi1, mul);
+
+        __m256d idx_d = _mm256_set_pd(i + 3, i + 2, i + 1, i);
+        __m256d tri = _mm256_mul_pd(_mm256_set1_pd(3.0), idx_d);
+        __m256d sub = _mm256_sub_pd(yv, tri);
+
+        __m256d res = _mm256_blendv_pd(sub, add, mask);
+        _mm256_store_pd(z + i, res);
+    }
+
+    for (; i < N; ++i)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+
+    // Handle i = 0 separately to avoid out-of-bounds
+    double a0 = x[1];
+    double b0 = y[0];
+    if (round(a0) > round(b0))
+    {
+        z[0] = a0 + a0 * b0;
+    }
+    else
+    {
+        z[0] = b0 - 0;
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const __m256d vthree = _mm256_set1_pd(3.0);
+    const __m256d vone = _mm256_set1_pd(1.0);
+    const __m256d vhalf = _mm256_set1_pd(0.5);
+    const __m256d vzero = _mm256_set1_pd(0.0);
+    
+    int i = 0;
+    for (; i <= N - 4; i += 4)
+    {
+        __m256d xi_minus1 = _mm256_load_pd(x + i - 1);  // [x[i-1], x[i], x[i+1], x[i+2]]
+        __m256d xi_plus1  = _mm256_load_pd(x + i + 1);  // [x[i+1], x[i+2], x[i+3], x[i+4]]
+
+        // blend to get a = (i%2==1 ? x[i-1] : x[i+1])
+        // For i = [even, odd, even, odd] => mask = [0, 1, 0, 1] = 0b1010 = 0xA
+        __m256d a = _mm256_blend_pd(xi_plus1, xi_minus1, 0xA);
+
+        __m256d b = _mm256_load_pd(y + i);
+
+        // round(a) > round(b)
+        // round(x) ≈ floor(x + 0.5)
+        __m256d a_round = _mm256_floor_pd(_mm256_add_pd(a, vhalf));
+        __m256d b_round = _mm256_floor_pd(_mm256_add_pd(b, vhalf));
+
+        __m256d cmp_mask = _mm256_cmp_pd(a_round, b_round, _CMP_GT_OQ);
+
+        __m256d aa = _mm256_mul_pd(a, a);
+        __m256d aab = _mm256_fmadd_pd(a, b, aa);  // a + a * b = a * (b + 1)
+        __m256d idx = _mm256_set_pd(i + 3, i + 2, i + 1, i);
+        __m256d b_minus_3i = _mm256_fnmadd_pd(vthree, idx, b); // b - 3*i
+
+        __m256d res = _mm256_blendv_pd(b_minus_3i, aab, cmp_mask);
+        _mm256_store_pd(z + i, res);
+    }
+
+    for (; i < N; ++i)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        double a_round = floor(a + 0.5);
+        double b_round = floor(b + 0.5);
+        if (a_round > b_round)
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3.0 * i;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================
+#include <immintrin.h>
+#include <cmath>
+#include "common.h"
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    const int unroll = 4;
+    int i = 1;
+    for (; i + unroll <= N - 1; i += unroll)
+    {
+        __m256d xi_p1 = _mm256_load_pd(x + i + 1);       // x[i+1] to x[i+4]
+        __m256d xi_m1 = _mm256_loadu_pd(x + i - 1);       // x[i-1] to x[i+2]
+        __m256d yi    = _mm256_load_pd(y + i);
+
+        __m256d mask_indices = _mm256_set_pd((i + 3) & 1, (i + 2) & 1, (i + 1) & 1, i & 1);
+        __m256d cmp_mask = _mm256_cmp_pd(mask_indices, _mm256_setzero_pd(), _CMP_NEQ_OQ);
+
+        __m256d a = _mm256_blendv_pd(xi_p1, xi_m1, cmp_mask); // odd: x[i-1], even: x[i+1]
+
+        __m256d ra = _mm256_round_pd(a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d rb = _mm256_round_pd(yi, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+
+        __m256d cmp = _mm256_cmp_pd(ra, rb, _CMP_GT_OQ);
+
+        __m256d a_times_b = _mm256_mul_pd(a, yi);
+        __m256d res1 = _mm256_add_pd(a, a_times_b);
+
+        __m256d idx = _mm256_set_pd(i + 3, i + 2, i + 1, i);
+        __m256d three = _mm256_set1_pd(3.0);
+        __m256d res2 = _mm256_fnmadd_pd(three, idx, yi); // yi - 3*i
+
+        __m256d result = _mm256_blendv_pd(res2, res1, cmp);
+        _mm256_store_pd(z + i, result);
+    }
+
+    for (; i < N - 1; ++i)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        z[i] = (round(a) > round(b)) ? a + a * b : b - 3 * i;
+    }
+
+    // Edge cases
+    if (N > 0)
+    {
+        double a = x[1];
+        double b = y[0];
+        z[0] = (round(a) > round(b)) ? a + a * b : b - 3 * 0;
+    }
+    if (N > 1)
+    {
+        double a = ((N - 1) % 2) ? x[N - 2] : x[N - 1]; // i=N-1, i%2
+        double b = y[N - 1];
+        z[N - 1] = (round(a) > round(b)) ? a + a * b : b - 3 * (N - 1);
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================

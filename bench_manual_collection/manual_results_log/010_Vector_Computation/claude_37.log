@@ -1,0 +1,292 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+// x, y, z are __attribute__((aligned(32)))
+void slow_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Handle the first element separately as it needs special boundary handling
+    if (0.0 > round(y[0])) {
+        z[0] = x[1] + x[1] * y[0];
+    } else {
+        z[0] = y[0] - 0.0;
+    }
+
+    // Prepare constants for vectorized operations
+    const __m256i vindex = _mm256_set_epi64x(3, 2, 1, 0);
+    const __m256i vones = _mm256_set1_epi64x(1);
+    const __m256i vtwo = _mm256_set1_epi64x(2);
+    const __m256d vthree = _mm256_set1_pd(3.0);
+    
+    // Process data in chunks of 4 doubles (AVX2 register size)
+    int i = 1;
+    for (; i <= N - 4; i += 4)
+    {
+        // Create vector containing [i, i+1, i+2, i+3]
+        __m256i vi = _mm256_add_epi64(vindex, _mm256_set1_epi64x(i));
+        
+        // Compute i % 2 for each element: (i & 1) == 1
+        __m256i vi_mod2 = _mm256_and_si256(vi, vones);
+        __m256i vcmp = _mm256_cmpeq_epi64(vi_mod2, vones);
+        
+        // Load y[i:i+3]
+        __m256d vy = _mm256_load_pd(&y[i]);
+        
+        // For each i, select either x[i-1] or x[i+1] based on i%2
+        __m256d vx_prev = _mm256_loadu_pd(&x[i-1]); // x[i-1:i+2]
+        __m256d vx_next = _mm256_loadu_pd(&x[i+1]); // x[i+1:i+4]
+        __m256d va = _mm256_blendv_pd(vx_next, vx_prev, _mm256_castsi256_pd(vcmp));
+        
+        // Round a and b
+        __m256d va_round = _mm256_round_pd(va, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d vb_round = _mm256_round_pd(vy, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        
+        // Compare rounded a > rounded b
+        __m256d vcmp_ab = _mm256_cmp_pd(va_round, vb_round, _CMP_GT_OQ);
+        
+        // Compute a + a * b for the true branch
+        __m256d va_mul_vb = _mm256_mul_pd(va, vy);
+        __m256d vresult_true = _mm256_add_pd(va, va_mul_vb);
+        
+        // Compute b - 3 * i for the false branch
+        __m256d vi_dbl = _mm256_cvtepi32_pd(_mm256_castsi256_si128(vi));
+        __m256d vthree_mul_i = _mm256_mul_pd(vthree, vi_dbl);
+        __m256d vresult_false = _mm256_sub_pd(vy, vthree_mul_i);
+        
+        // Select the appropriate result based on the comparison
+        __m256d vresult = _mm256_blendv_pd(vresult_false, vresult_true, vcmp_ab);
+        
+        // Store the result
+        _mm256_store_pd(&z[i], vresult);
+    }
+    
+    // Handle the remaining elements individually
+    for (; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Handle edge case for i=0
+    double a0 = x[1]; // When i=0, i%2=0, so we use x[i+1]
+    double b0 = y[0];
+    z[0] = (round(a0) > round(b0)) ? (a0 + a0 * b0) : (b0 - 0);
+
+    // Vectorized main loop processing 4 elements at once
+    // Calculate remainder to handle non-multiple-of-4 sizes
+    int vectorizable_limit = ((N-1)/4) * 4; // Process up to this in vectors
+    
+    // Constants for vector operations
+    __m256d vec_three = _mm256_set1_pd(3.0);
+    
+    for (int i = 1; i < vectorizable_limit; i += 4)
+    {
+        // Load y elements
+        __m256d y_vec = _mm256_load_pd(&y[i]);
+        
+        // Handle the a values based on odd/even indices
+        // For i, i+1, i+2, i+3:
+        // If i is odd, use x[i-1], else x[i+1]
+        // If i+1 is odd, use x[i], else x[i+2]
+        // If i+2 is odd, use x[i+1], else x[i+3]
+        // If i+3 is odd, use x[i+2], else x[i+4]
+        double a_values[4];
+        a_values[0] = (i % 2) ? x[i-1] : x[i+1];
+        a_values[1] = ((i+1) % 2) ? x[i] : x[i+2];
+        a_values[2] = ((i+2) % 2) ? x[i+1] : x[i+3];
+        a_values[3] = ((i+3) % 2) ? x[i+2] : x[i+4];
+        
+        __m256d a_vec = _mm256_loadu_pd(a_values);
+        
+        // Round values for comparison
+        __m256d a_rounded = _mm256_round_pd(a_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d y_rounded = _mm256_round_pd(y_vec, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        
+        // Compare rounded values
+        __m256d cmp_mask = _mm256_cmp_pd(a_rounded, y_rounded, _CMP_GT_OQ);
+        
+        // Calculate index-dependent values (3*i, 3*(i+1), 3*(i+2), 3*(i+3))
+        __m256d index_vec = _mm256_set_pd(i+3, i+2, i+1, i);
+        __m256d scaled_indices = _mm256_mul_pd(index_vec, vec_three);
+        
+        // Calculate a + a*b
+        __m256d a_times_b = _mm256_mul_pd(a_vec, y_vec);
+        __m256d a_plus_ab = _mm256_add_pd(a_vec, a_times_b);
+        
+        // Calculate b - 3*i
+        __m256d b_minus_3i = _mm256_sub_pd(y_vec, scaled_indices);
+        
+        // Select based on comparison
+        __m256d result = _mm256_blendv_pd(b_minus_3i, a_plus_ab, cmp_mask);
+        
+        // Store the results
+        _mm256_store_pd(&z[i], result);
+    }
+    
+    // Handle remaining elements
+    for (int i = vectorizable_limit; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+>>>
+Starting program. 2 functions registered.
+Segmentation fault
+<<<
+WA
+================================
+void max_performance(double *__restrict x, double *__restrict y, double *__restrict z)
+{
+    // Handle first element separately since it requires special boundary handling
+    double a0 = x[1]; // For i=0, i%2=0, so a = x[i+1]
+    double b0 = y[0];
+    z[0] = (round(a0) > round(b0)) ? (a0 + a0 * b0) : (b0 - 0);
+
+    // Process the bulk of the array with SIMD
+    int i = 1;
+    
+    // Constants for vectorized processing
+    __m256i vindex = _mm256_set_epi64x(3, 2, 1, 0);
+    __m256i vtwo = _mm256_set1_epi64x(2);
+    __m256i vone = _mm256_set1_epi64x(1);
+    __m256d vthree = _mm256_set1_pd(3.0);
+    
+    for (; i <= N-4; i += 4)
+    {
+        // Current indices for this iteration
+        __m256i vi = _mm256_add_epi64(vindex, _mm256_set1_epi64x(i));
+        
+        // Calculate i % 2 using AND with 1 (more efficient than modulo)
+        __m256i vimask = _mm256_and_si256(vi, vone);
+        
+        // Build indices for x array access based on i % 2 condition
+        __m256i vidx_minus = _mm256_sub_epi64(vi, vone);       // i-1
+        __m256i vidx_plus = _mm256_add_epi64(vi, vone);        // i+1
+        
+        // Create a mask for the i % 2 condition
+        __m256i vcmp = _mm256_cmpeq_epi64(vimask, vone);       // Compare i%2 with 1
+        
+        // Load elements from x array using calculated indices
+        // NOTE: This uses gather operations which are efficient on modern CPUs
+        __m256d xminus = _mm256_i64gather_pd(x, vidx_minus, 8); // x[i-1]
+        __m256d xplus = _mm256_i64gather_pd(x, vidx_plus, 8);   // x[i+1]
+        
+        // Select between x[i-1] and x[i+1] based on i % 2
+        __m256d a = _mm256_blendv_pd(xplus, xminus, _mm256_castsi256_pd(vcmp));
+        
+        // Load y values directly
+        __m256d b = _mm256_loadu_pd(&y[i]);
+        
+        // Round values for comparison (using AVX2)
+        __m256d a_rounded = _mm256_round_pd(a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        __m256d b_rounded = _mm256_round_pd(b, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        
+        // Compare rounded values
+        __m256d cmp_mask = _mm256_cmp_pd(a_rounded, b_rounded, _CMP_GT_OQ);
+        
+        // Calculate both branches
+        __m256d mul = _mm256_mul_pd(a, b);         // a * b
+        __m256d first_branch = _mm256_add_pd(a, mul); // a + a * b
+        
+        // Calculate 3 * i vector
+        __m256d vi_double = _mm256_cvtepi64_pd(vi);  // Convert i to double
+        __m256d three_i = _mm256_mul_pd(vi_double, vthree); // 3 * i
+        
+        __m256d second_branch = _mm256_sub_pd(b, three_i); // b - 3 * i
+        
+        // Select the appropriate branch based on the comparison
+        __m256d result = _mm256_blendv_pd(second_branch, first_branch, cmp_mask);
+        
+        // Store the results
+        _mm256_storeu_pd(&z[i], result);
+        
+        // Update indices for next iteration
+        vindex = _mm256_add_epi64(vindex, vtwo);
+    }
+    
+    // Handle remaining elements
+    for (; i < N; i++)
+    {
+        double a = i % 2 ? x[i - 1] : x[i + 1];
+        double b = y[i];
+        if (round(a) > round(b))
+        {
+            z[i] = a + a * b;
+        }
+        else
+        {
+            z[i] = b - 3 * i;
+        }
+    }
+}
+>>>
+make: *** [Makefile:13: benchmark] Error 1
+<<<
+CE
+================================

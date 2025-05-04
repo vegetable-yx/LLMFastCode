@@ -1,0 +1,227 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+#define K 4
+#define N 128
+
+#define GET_X(i, j) x[(i) * N + (j)]
+#define GET_Y(i, j) y[(i) * ON + (j)]
+#define GET_H(i, j) h[(i) * K + (j)]
+
+void slow_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    for (int i = 0; i < ON; i++)
+    {
+        for (int j = 0; j < ON; j++)
+        {
+            GET_Y(i, j) = 0.0;
+            for (int k0 = 0; k0 < K; k0++)
+            {
+                for (int k1 = 0; k1 < K; k1++)
+                {
+                    GET_Y(i, j) += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+                }
+            }
+        }
+    }
+}
+
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+}
+```
+
+
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+
+    double hLocal[K * K];
+    for (int k0 = 0; k0 < K; ++k0)
+        for (int k1 = 0; k1 < K; ++k1)
+            hLocal[k0 * K + k1] = h[k0 * K + k1];
+
+    for (int i = 0; i < ON; ++i)
+    {
+        int j = 0;
+        for (; j + 3 < ON; j += 4)
+        {
+            __m256d acc = _mm256_setzero_pd();
+            __m256d jvec = _mm256_set_pd(j + 3, j + 2, j + 1, j);
+
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                const int rowBase = (i + k0) * N;
+
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    const __m256d hvec   = _mm256_set1_pd(hLocal[k0 * K + k1]);
+                    const __m256d factor = _mm256_add_pd(jvec, _mm256_set1_pd(i + k0 + k1 - 1));
+                    const __m256d mult   = _mm256_mul_pd(hvec, factor);
+
+                    __m256d xvec = _mm256_loadu_pd(&x[rowBase + j + k1]);
+                    xvec          = _mm256_andnot_pd(sign_mask, xvec); // fabs
+
+                    acc = _mm256_fmadd_pd(mult, xvec, acc);
+                }
+            }
+            _mm256_storeu_pd(&y[i * ON + j], acc);
+        }
+
+        for (; j < ON; ++j)
+        {
+            double sum = 0.0;
+            for (int k0 = 0; k0 < K; ++k0)
+                for (int k1 = 0; k1 < K; ++k1)
+                    sum += (i + j + k0 + k1 - 1) * h[k0 * K + k1] *
+                           fabs(x[(i + k0) * N + (j + k1)]);
+            y[i * ON + j] = sum;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+71746.2 cycles
+
+Running: maxperformance
+65256.7 cycles
+<<<
+1.0994457274118978
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    const __m256i sign_mask = _mm256_set1_epi64x(0x8000000000000000ULL);
+    double hval[K * K];
+    for (int k0 = 0; k0 < K; ++k0)
+        for (int k1 = 0; k1 < K; ++k1)
+            hval[k0 * K + k1] = GET_H(k0, k1);
+    for (int i = 0; i < ON; ++i)
+    {
+        int j = 0;
+        for (; j + 3 < ON; j += 4)
+        {
+            __m256d jvec = _mm256_setr_pd((double)j, (double)(j + 1), (double)(j + 2), (double)(j + 3));
+            __m256d acc = _mm256_setzero_pd();
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                int row = (i + k0) * N;
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    __m256d xvec = _mm256_loadu_pd(&x[row + j + k1]);
+                    xvec = _mm256_andnot_pd(_mm256_castsi256_pd(sign_mask), xvec);
+                    __m256d hvec = _mm256_set1_pd(hval[k0 * K + k1]);
+                    __m256d factor = _mm256_add_pd(jvec, _mm256_set1_pd((double)(i + k0 + k1 - 1)));
+                    acc = _mm256_fmadd_pd(_mm256_mul_pd(hvec, xvec), factor, acc);
+                }
+            }
+            _mm256_storeu_pd(&GET_Y(i, j), acc);
+        }
+        for (; j < ON; ++j)
+        {
+            double s = 0.0;
+            for (int k0 = 0; k0 < K; ++k0)
+                for (int k1 = 0; k1 < K; ++k1)
+                    s += (i + j + k0 + k1 - 1) * GET_H(k0, k1) * fabs(GET_X(i + k0, j + k1));
+            GET_Y(i, j) = s;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+74065.5 cycles
+
+Running: maxperformance
+62489.4 cycles
+<<<
+1.1852490182334923
+================================
+void max_performance(double *__restrict x, double *__restrict h, double *__restrict y)
+{
+    const int ON = N - K + 1;
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+
+    double h_cache[K][K];
+    for (int k0 = 0; k0 < K; ++k0)
+        for (int k1 = 0; k1 < K; ++k1)
+            h_cache[k0][k1] = GET_H(k0, k1);
+
+    for (int i = 0; i < ON; ++i)
+    {
+        __m256d i_minus1_vec = _mm256_set1_pd((double)i - 1.0);
+        int j = 0;
+        for (; j <= ON - 4; j += 4)
+        {
+            __m256d j_vec = _mm256_set_pd((double)(j + 3),
+                                          (double)(j + 2),
+                                          (double)(j + 1),
+                                          (double)j);
+            __m256d base_vec = _mm256_add_pd(i_minus1_vec, j_vec);
+            __m256d y_vec = _mm256_setzero_pd();
+
+            for (int k0 = 0; k0 < K; ++k0)
+            {
+                for (int k1 = 0; k1 < K; ++k1)
+                {
+                    __m256d coeff_vec = _mm256_add_pd(base_vec, _mm256_set1_pd((double)(k0 + k1)));
+                    __m256d x_vec = _mm256_loadu_pd(&GET_X(i + k0, j + k1));
+                    x_vec = _mm256_andnot_pd(sign_mask, x_vec);
+                    __m256d term = _mm256_mul_pd(coeff_vec, x_vec);
+                    term = _mm256_mul_pd(term, _mm256_set1_pd(h_cache[k0][k1]));
+                    y_vec = _mm256_add_pd(y_vec, term);
+                }
+            }
+            _mm256_storeu_pd(&GET_Y(i, j), y_vec);
+        }
+
+        for (; j < ON; ++j)
+        {
+            double sum = 0.0;
+            double base = (double)(i + j - 1);
+            for (int k0 = 0; k0 < K; ++k0)
+                for (int k1 = 0; k1 < K; ++k1)
+                    sum += (base + (double)(k0 + k1)) * h_cache[k0][k1] *
+                           fabs(GET_X(i + k0, j + k1));
+            GET_Y(i, j) = sum;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance1
+72301.6 cycles
+
+Running: maxperformance
+61457.8 cycles
+<<<
+1.1764430226919935
+================================

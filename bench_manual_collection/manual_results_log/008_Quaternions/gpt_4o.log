@@ -1,0 +1,235 @@
+Rewrite `slow_performance` into `max_performance`, keeping inputs, outputs, and behavior identical with allowable total squared precision error of 1e-3.  
+Only apply performance optimizations (algebraic simplification, cache-friendly memory access, SIMD/AVX-2, loop unrolling, etc.).  
+
+**Assume the code executes on a single core, DO NOT introduce multithreading or parallelism.**
+
+**Target system**
+- Intel(R) Core(TM) Ultra 7 265K CPU @ 3.90GHz
+- Caches: 240 KB L1 D + 32 KB L1 I per core, 3.00 MB L2 per core, 30 MB shared L3  
+- GCC 12 on Debian Bookworm; compile with `-O3 -march=native -mavx2 -std=c++11`
+
+**Hints**
+- Write SIMDe code with <immintrin.h> whenever possible.
+- Do not use libc functions as their performance is not good.
+
+Return **only** the full, ready-to-compile `max_performance` function—no other text, comments, or explanations.
+
+
+```
+#include <immintrin.h>
+#include "common.h"
+
+void slow_performance(double*__restrict x, double*__restrict y, double*__restrict A) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            double a = x[4 * i + 0];
+            double b = x[4 * i + 1];
+            double c = x[4 * i + 2];
+            double d = x[4 * i + 3];
+
+            double e = y[4 * j + 0];
+            double f = y[4 * j + 1];
+            double g = y[4 * j + 2];
+            double h = y[4 * j + 3];
+
+            // Quaternion multiplication:
+            // (a + bi + cj + dk) * (e + fi + gj + hk) =
+            // (ae - bf - cg - dh) +
+            // (af + be + ch - dg)i +
+            // (ag - bh + ce + df)j +
+            // (ah + bg - cf + de)k
+            double r0 = a * e - b * f - c * g - d * h;
+            double r1 = a * f + b * e + c * h - d * g;
+            double r2 = a * g - b * h + c * e + d * f;
+            double r3 = a * h + b * g - c * f + d * e;
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = r0;
+            A[index + 1] = r1;
+            A[index + 2] = r2;
+            A[index + 3] = r3;
+        }
+    }
+}
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+}
+```
+
+
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    for (int i = 0; i < 2; ++i) {
+        __m256d axy = _mm256_load_pd(&x[4 * i]);
+        __m256d a = _mm256_permute4x64_pd(axy, 0b00000000);
+        __m256d b = _mm256_permute4x64_pd(axy, 0b01010101);
+        __m256d c = _mm256_permute4x64_pd(axy, 0b10101010);
+        __m256d d = _mm256_permute4x64_pd(axy, 0b11111111);
+
+        for (int j = 0; j < 2; ++j) {
+            __m256d bxy = _mm256_load_pd(&y[4 * j]);
+            __m256d e = bxy;
+            __m256d f = _mm256_permute4x64_pd(bxy, 0b01010101);
+            __m256d g = _mm256_permute4x64_pd(bxy, 0b10101010);
+            __m256d h = _mm256_permute4x64_pd(bxy, 0b11111111);
+
+            __m256d ae = _mm256_mul_pd(a, e);
+            __m256d bf = _mm256_mul_pd(b, f);
+            __m256d cg = _mm256_mul_pd(c, g);
+            __m256d dh = _mm256_mul_pd(d, h);
+            __m256d af = _mm256_mul_pd(a, f);
+            __m256d be = _mm256_mul_pd(b, e);
+            __m256d ch = _mm256_mul_pd(c, h);
+            __m256d dg = _mm256_mul_pd(d, g);
+            __m256d ag = _mm256_mul_pd(a, g);
+            __m256d bh = _mm256_mul_pd(b, h);
+            __m256d ce = _mm256_mul_pd(c, e);
+            __m256d df = _mm256_mul_pd(d, f);
+            __m256d ah = _mm256_mul_pd(a, h);
+            __m256d bg = _mm256_mul_pd(b, g);
+            __m256d cf = _mm256_mul_pd(c, f);
+            __m256d de = _mm256_mul_pd(d, e);
+
+            __m256d r0 = _mm256_sub_pd(_mm256_sub_pd(ae, bf), _mm256_add_pd(cg, dh));
+            __m256d r1 = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(af, be), dg), ch);
+            __m256d r2 = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(ag, ce), bh), df);
+            __m256d r3 = _mm256_add_pd(_mm256_sub_pd(_mm256_add_pd(ah, bg), cf), de);
+
+            int index = 4 * (i * 2 + j);
+            _mm256_storeu_pd(&A[index], _mm256_set_pd(r3[0], r2[0], r1[0], r0[0]));
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+11.7855 cycles
+
+Running: maxperformance
+23.4323 cycles
+<<<
+11.7855 / 23.4323 = 0.5029595899676942
+================================
+#include <immintrin.h>
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    for (int i = 0; i < 2; ++i) {
+        __m256d x0 = _mm256_load_pd(&x[4 * i]); // a, b, c, d
+
+        for (int j = 0; j < 2; ++j) {
+            __m256d y0 = _mm256_load_pd(&y[4 * j]); // e, f, g, h
+
+            // Shuffle x and y components for multiplication
+            __m256d x_a = _mm256_permute4x64_pd(x0, 0x00); // a a a a
+            __m256d x_b = _mm256_permute4x64_pd(x0, 0x55); // b b b b
+            __m256d x_c = _mm256_permute4x64_pd(x0, 0xAA); // c c c c
+            __m256d x_d = _mm256_permute4x64_pd(x0, 0xFF); // d d d d
+
+            __m256d r0 = _mm256_fnmadd_pd(x_b, y0, _mm256_mul_pd(x_a, y0)); // a*e - b*f
+            r0 = _mm256_fnmadd_pd(x_c, y0, r0); // - c*g
+            r0 = _mm256_fnmadd_pd(x_d, y0, r0); // - d*h
+            double result0 = ((double*)&r0)[0];
+
+            __m256d y_shuf1 = _mm256_permute4x64_pd(y0, 0x55); // f f f f
+            __m256d y_shuf2 = _mm256_permute4x64_pd(y0, 0xAA); // g g g g
+            __m256d y_shuf3 = _mm256_permute4x64_pd(y0, 0xFF); // h h h h
+
+            __m256d r1 = _mm256_fmadd_pd(x_b, y0, _mm256_mul_pd(x_a, y_shuf1)); // af + be
+            r1 = _mm256_fmadd_pd(x_c, y_shuf3, r1); // + ch
+            r1 = _mm256_fnmadd_pd(x_d, y_shuf2, r1); // - dg
+            double result1 = ((double*)&r1)[0];
+
+            __m256d r2 = _mm256_fnmadd_pd(x_b, y_shuf3, _mm256_mul_pd(x_a, y_shuf2)); // ag - bh
+            r2 = _mm256_fmadd_pd(x_c, y0, r2); // + ce
+            r2 = _mm256_fmadd_pd(x_d, y_shuf1, r2); // + df
+            double result2 = ((double*)&r2)[0];
+
+            __m256d r3 = _mm256_fmadd_pd(x_b, y_shuf2, _mm256_mul_pd(x_a, y_shuf3)); // ah + bg
+            r3 = _mm256_fnmadd_pd(x_c, y_shuf1, r3); // - cf
+            r3 = _mm256_fmadd_pd(x_d, y0, r3); // + de
+            double result3 = ((double*)&r3)[0];
+
+            int index = 4 * (i * 2 + j);
+            A[index + 0] = result0;
+            A[index + 1] = result1;
+            A[index + 2] = result2;
+            A[index + 3] = result3;
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+The result of the 2th function is not correct.
+
+Running: slow_performance
+12.0806 cycles
+
+Running: maxperformance
+23.5471 cycles
+<<<
+WA
+================================
+#include <immintrin.h>
+#include "common.h"
+
+void max_performance(double*__restrict x, double*__restrict y, double*__restrict A)
+{
+    for (int i = 0; i < 2; ++i) {
+        __m256d axy = _mm256_load_pd(x + 4 * i);
+        __m256d a = _mm256_permute4x64_pd(axy, 0x00); // [a a a a]
+        __m256d b = _mm256_permute4x64_pd(axy, 0x55); // [b b b b]
+        __m256d c = _mm256_permute4x64_pd(axy, 0xAA); // [c c c c]
+        __m256d d = _mm256_permute4x64_pd(axy, 0xFF); // [d d d d]
+
+        for (int j = 0; j < 2; ++j) {
+            __m256d bcd0 = _mm256_unpacklo_pd(b, c); // [b c b c]
+            __m256d bcd1 = _mm256_unpackhi_pd(b, c); // [b c b c]
+            __m256d d0 = _mm256_permute2f128_pd(d, d, 0x00);
+            __m256d d1 = _mm256_permute2f128_pd(d, d, 0x11);
+
+            __m256d efg = _mm256_load_pd(y + 4 * j);
+            __m256d e = _mm256_permute4x64_pd(efg, 0x00);
+            __m256d f = _mm256_permute4x64_pd(efg, 0x55);
+            __m256d g = _mm256_permute4x64_pd(efg, 0xAA);
+            __m256d h = _mm256_permute4x64_pd(efg, 0xFF);
+
+            __m256d r0 = _mm256_sub_pd(_mm256_mul_pd(a, e),
+                          _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(b, f), _mm256_mul_pd(c, g)), _mm256_mul_pd(d, h)));
+
+            __m256d r1 = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(a, f), _mm256_mul_pd(b, e)),
+                          _mm256_sub_pd(_mm256_mul_pd(c, h), _mm256_mul_pd(d, g)));
+
+            __m256d r2 = _mm256_add_pd(_mm256_sub_pd(_mm256_mul_pd(a, g), _mm256_mul_pd(b, h)),
+                          _mm256_add_pd(_mm256_mul_pd(c, e), _mm256_mul_pd(d, f)));
+
+            __m256d r3 = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(a, h), _mm256_mul_pd(b, g)),
+                          _mm256_sub_pd(_mm256_mul_pd(d, e), _mm256_mul_pd(c, f)));
+
+            int index = 4 * (i * 2 + j);
+            _mm256_storeu_pd(A + index, _mm256_setr_pd(
+                ((double*)&r0)[0], ((double*)&r1)[0], ((double*)&r2)[0], ((double*)&r3)[0]
+            ));
+        }
+    }
+}
+
+>>>
+Starting program. 2 functions registered.
+
+Running: slow_performance
+12.052 cycles
+
+Running: maxperformance
+23.8538 cycles
+<<<
+12.052 / 23.8538 = 0.5052444474255674
+================================
